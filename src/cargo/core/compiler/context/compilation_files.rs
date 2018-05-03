@@ -274,9 +274,13 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
                     match file_types {
                         Some(types) => for file_type in types {
                             let path = out_dir.join(file_type.filename(&file_stem));
-                            let hardlink = link_stem
-                                .as_ref()
-                                .map(|&(ref ld, ref ls)| ld.join(file_type.filename(ls)));
+                            let hardlink = if crate_type == "rlib" {
+                                None
+                            } else {
+                                link_stem
+                                    .as_ref()
+                                    .map(|&(ref ld, ref ls)| ld.join(file_type.filename(ls)))
+                            };
                             ret.push(OutputFile {
                                 path,
                                 hardlink,
