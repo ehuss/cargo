@@ -1,12 +1,13 @@
+use std;
 use std::cell::{RefCell, RefMut};
-use std::collections::HashSet;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::hash_map::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::fmt;
 use std::fs::{self, File};
-use std::io::SeekFrom;
 use std::io::prelude::*;
+use std::io::SeekFrom;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -15,20 +16,20 @@ use std::time::Instant;
 
 use curl::easy::Easy;
 use jobserver;
-use serde::{Serialize, Serializer};
-use toml;
 use lazycell::LazyCell;
+use serde::{de, de::IntoDeserializer, Serialize, Serializer};
+use toml;
 
 use core::shell::Verbosity;
 use core::{CliUnstable, Shell, SourceId, Workspace};
 use ops;
 use url::Url;
-use util::ToUrl;
-use util::Rustc;
 use util::errors::{internal, CargoError, CargoResult, CargoResultExt};
 use util::paths;
 use util::toml as cargo_toml;
 use util::Filesystem;
+use util::Rustc;
+use util::ToUrl;
 
 use self::ConfigValue as CV;
 
@@ -298,12 +299,7 @@ impl Config {
     where
         CargoError: From<V::Err>,
     {
-        let key = key.replace(".", "_")
-            .replace("-", "_")
-            .chars()
-            .flat_map(|c| c.to_uppercase())
-            .collect::<String>();
-        match env::var(&format!("CARGO_{}", key)) {
+        match env::var(&to_env_key(key)) {
             Ok(value) => Ok(Some(Value {
                 val: value.parse()?,
                 definition: Definition::Environment,
@@ -700,6 +696,718 @@ impl Config {
 
     pub fn creation_time(&self) -> Instant {
         self.creation_time
+    }
+
+    /// DOCME
+    pub fn load_type<'de, T: de::Deserialize<'de>>(&self, key: &str) -> CargoResult<T> {
+        let d = Deserializer {
+            config: self,
+            key: ConfigKey::from_str(key),
+        };
+        // TODO: Better way to convert error?
+        // T::deserialize(d).map_err(|e| e.into())
+        Ok(T::deserialize(d).chain_err(|| format_err!("failed to load from config"))?)
+    }
+}
+
+/// DOCME
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+enum ConfigKeyPart {
+    Part(String),
+    CasePart(String),
+}
+
+impl ConfigKeyPart {
+    fn to_env(&self) -> String {
+        match self {
+            ConfigKeyPart::Part(s) => s.replace("-", "_").to_uppercase(),
+            ConfigKeyPart::CasePart(s) => s.clone(),
+        }
+    }
+
+    fn to_config(&self) -> String {
+        match self {
+            ConfigKeyPart::Part(s) => s.clone(),
+            ConfigKeyPart::CasePart(s) => s.clone(),
+        }
+    }
+}
+
+/// DOCME
+#[derive(Debug, Clone)]
+struct ConfigKey(Vec<ConfigKeyPart>);
+
+impl ConfigKey {
+    fn from_str(key: &str) -> ConfigKey {
+        ConfigKey(
+            key.split('.')
+                .map(|p| ConfigKeyPart::Part(p.to_string()))
+                .collect(),
+        )
+    }
+
+    fn join(&self, next: ConfigKeyPart) -> ConfigKey {
+        let mut res = self.clone();
+        res.0.push(next);
+        res
+    }
+
+    fn to_env(&self) -> String {
+        format!(
+            "CARGO_{}",
+            self.0
+                .iter()
+                .map(|p| p.to_env())
+                .collect::<Vec<_>>()
+                .join("_")
+        )
+    }
+
+    fn to_config(&self) -> String {
+        self.0
+            .iter()
+            .map(|p| p.to_config())
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+}
+
+impl fmt::Display for ConfigKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.to_config().fmt(f)
+    }
+}
+
+/// DOCME
+fn to_env_key(key: &str) -> String {
+    format!(
+        "CARGO_{}",
+        key.replace(".", "_")
+            .replace("-", "_")
+            .chars()
+            .flat_map(|c| c.to_uppercase())
+            .collect::<String>()
+    )
+}
+
+/// DOCME
+#[derive(Debug)]
+pub struct DeError {
+    message: String,
+    path: Option<PathBuf>,
+}
+
+// TODO: AFAIK, you cannot override Fail::cause (due to specialization), so we
+// have no way to bubble up the underlying error.  For now, it just formats
+// the underlying cause as a string.
+
+impl DeError {
+    fn new_msg(message: String) -> DeError {
+        DeError {
+            message,
+            path: None,
+        }
+    }
+    /*
+    fn with_path(self, path: PathBuf) -> Self {
+        DeError {
+            message: self.message,
+            path: Some(path),
+        }
+    }
+    */
+    fn new_missing(key: String) -> DeError {
+        DeError {
+            message: format!("missing config key {}", key),
+            path: None,
+        }
+    }
+}
+
+impl std::error::Error for DeError {
+    fn description(&self) -> &str {
+        self.message.as_str()
+    }
+}
+
+impl fmt::Display for DeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(ref path) = self.path {
+            write!(f, "error in {}: {}", path.display(), self.message)
+        } else {
+            write!(f, "{}", self.message)
+        }
+    }
+}
+
+impl de::Error for DeError {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
+        DeError {
+            path: None,
+            message: msg.to_string(),
+        }
+    }
+}
+
+/// DOCME
+pub struct Deserializer<'config> {
+    config: &'config Config,
+    key: ConfigKey,
+}
+
+impl<'de, 'config> de::Deserializer<'de> for Deserializer<'config> {
+    type Error = DeError;
+
+    fn deserialize_struct<V>(
+        self,
+        _name: &'static str,
+        fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_map(ConfigMapAccess::new_struct(self.config, self.key, fields))
+    }
+
+    fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_bool<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_i8<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_i16<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_i32<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_i64<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        let v = match env::var(self.key.to_env()) {
+            Ok(v) => v.parse().map_err(|e| DeError::new_msg(format!("{}", e)))?,
+            // TODO: check err
+            Err(_) => {
+                self.config.get_i64(&self.key.to_config())
+                .map_err(|e| DeError::new_msg(format!("{}", e)))?
+                .ok_or_else(|| DeError::new_missing(self.key.to_config()))?
+                // TODO: try_from to get error?
+                .val as u8
+            }
+        };
+        visitor.visit_u8(v)
+    }
+
+    fn deserialize_u16<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_u32<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_u64<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_f32<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_f64<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_char<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_str<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_string<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_bytes<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_byte_buf<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_some(self)
+    }
+
+    fn deserialize_unit<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_unit_struct<V>(
+        self,
+        _name: &'static str,
+        _visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_newtype_struct<V>(
+        self,
+        _name: &'static str,
+        _visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_seq<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_tuple<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_tuple_struct<V>(
+        self,
+        _name: &'static str,
+        _len: usize,
+        _visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_map(ConfigMapAccess::new_map(self.config, self.key))
+    }
+
+    fn deserialize_enum<V>(
+        self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_identifier<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_ignored_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+}
+
+/// DOCME
+struct ConfigMapAccess<'config> {
+    config: &'config Config,
+    key: ConfigKey,
+    map_iter: <HashMap<ConfigKeyPart, CMAValue> as IntoIterator>::IntoIter,
+    next: Option<(ConfigKeyPart, CMAValue)>,
+}
+
+#[derive(Debug)]
+enum CMAValue {
+    CV(CV),
+    Env(String),
+    EnvTable,
+    Missing,
+}
+
+impl<'config> ConfigMapAccess<'config> {
+    fn new_map(config: &'config Config, key: ConfigKey) -> ConfigMapAccess<'config> {
+        let mut map = HashMap::new();
+        // TODO: Handle err?
+        // "profile.dev.overrides"
+        if let Ok(Some(mut v)) = config.get_table(&key.to_config()) {
+            // v: Value<HashMap<String, CV>>
+            for (key, value) in v.val.drain() {
+                // pkg -> TomlProfile
+                map.insert(ConfigKeyPart::Part(key), CMAValue::CV(value));
+            }
+        }
+        // CARGO_PROFILE_DEV_OVERRIDES_
+        let env_pattern = format!("{}_", key.to_env());
+        for (env_key, _) in env::vars() {
+            if env_key.starts_with(&env_pattern) {
+                // CARGO_PROFILE_DEV_OVERRIDES_bar_OPT_LEVEL = 3
+                let rest = &env_key[env_pattern.len()..];
+                // rest = bar_OPT_LEVEL
+                let part = rest.splitn(2, "_").next().unwrap();
+                // part = "bar"
+                map.insert(
+                    ConfigKeyPart::CasePart(part.to_string()),
+                    CMAValue::EnvTable,
+                );
+            }
+        }
+        ConfigMapAccess {
+            config,
+            key,
+            map_iter: map.into_iter(),
+            next: None,
+        }
+    }
+
+    fn new_struct(
+        config: &'config Config,
+        key: ConfigKey,
+        fields: &'static [&'static str],
+    ) -> ConfigMapAccess<'config> {
+        let mut map = HashMap::new();
+        for field in fields {
+            let key_part = ConfigKeyPart::Part(field.to_string());
+            let mut inserted = false;
+            let field_key = key.join(key_part.clone());
+            // TODO: Handle err?
+            if let Ok(Some(cv)) = config.get(&field_key.to_config()) {
+                map.insert(key_part.clone(), CMAValue::CV(cv));
+                inserted = true;
+            }
+
+            // TODO: check err
+            if let Ok(v) = env::var(field_key.to_env()) {
+                map.insert(key_part.clone(), CMAValue::Env(v));
+                inserted = true;
+            }
+
+            // Nested struct or map will need to be followed.
+            let env_pattern = format!("{}_", field_key.to_env());
+            if env::vars().any(|(k, _)| k.starts_with(&env_pattern)) {
+                map.insert(key_part.clone(), CMAValue::EnvTable);
+                inserted = true;
+            }
+
+            if !inserted {
+                map.insert(key_part.clone(), CMAValue::Missing);
+            }
+        }
+        ConfigMapAccess {
+            config,
+            key,
+            map_iter: map.into_iter(),
+            next: None,
+        }
+    }
+}
+
+impl<'de, 'config> de::MapAccess<'de> for ConfigMapAccess<'config> {
+    type Error = DeError;
+
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
+    where
+        K: de::DeserializeSeed<'de>,
+    {
+        match self.map_iter.next() {
+            Some((key, value)) => {
+                let de_key = key.to_config();
+                self.next = Some((key, value));
+                // TODO: error with path
+                seed.deserialize(de_key.into_deserializer()).map(Some)
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::DeserializeSeed<'de>,
+    {
+        // TODO: Is it safe to assume next_value_seed is always called
+        // (exactly once) after next_key_seed?
+        let (next_key, next_value) = self.next.take().expect("next field missing");
+        match next_value {
+            CMAValue::CV(CV::List(_, _)) => unimplemented!(),
+            CMAValue::EnvTable | CMAValue::CV(CV::Table(_, _)) => seed.deserialize(Deserializer {
+                config: self.config,
+                key: self.key.join(next_key),
+            }),
+            CMAValue::CV(cv) => seed.deserialize(cv),
+            CMAValue::Env(s) => seed.deserialize(EnvStrDeserializer(s.clone())),
+            // TODO: more context in error
+            CMAValue::Missing => seed.deserialize(MissingFieldDeserializer(next_key.to_config())),
+        }
+    }
+}
+
+/// DOCME
+struct EnvStrDeserializer(String);
+
+// TODO: Is there a better way?  Or maybe use a macro?
+impl<'de> de::Deserializer<'de> for EnvStrDeserializer {
+    type Error = DeError;
+
+    fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!();
+    }
+
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_bool(self.0
+            .parse()
+            .map_err(|e| DeError::new_msg(format!("{}", e)))?)
+    }
+
+    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_i8(self.0
+            .parse()
+            .map_err(|e| DeError::new_msg(format!("{}", e)))?)
+    }
+
+    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_i16(self.0
+            .parse()
+            .map_err(|e| DeError::new_msg(format!("{}", e)))?)
+    }
+
+    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_i32(self.0
+            .parse()
+            .map_err(|e| DeError::new_msg(format!("{}", e)))?)
+    }
+
+    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_i64(self.0
+            .parse()
+            .map_err(|e| DeError::new_msg(format!("{}", e)))?)
+    }
+
+    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_u8(self.0
+            .parse()
+            .map_err(|e| DeError::new_msg(format!("{}", e)))?)
+    }
+
+    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_u16(self.0
+            .parse()
+            .map_err(|e| DeError::new_msg(format!("{}", e)))?)
+    }
+
+    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_u32(self.0
+            .parse()
+            .map_err(|e| DeError::new_msg(format!("{}", e)))?)
+    }
+
+    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_u64(self.0
+            .parse()
+            .map_err(|e| DeError::new_msg(format!("{}", e)))?)
+    }
+
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_str(self.0.as_str())
+    }
+
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_string(self.0)
+    }
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_some(self)
+    }
+
+    // Currently unimplemented, but would be easy to add if needed.
+    forward_to_deserialize_any! {
+        f32 f64 char bytes byte_buf
+        unit unit_struct newtype_struct seq tuple tuple_struct map
+        struct enum identifier ignored_any
+    }
+
+}
+
+/// DOCME
+struct MissingFieldDeserializer(String);
+
+impl<'de> de::Deserializer<'de> for MissingFieldDeserializer {
+    type Error = DeError;
+
+    fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        Err(DeError::new_missing(self.0))
+    }
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_none()
+    }
+
+    forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes
+        byte_buf unit unit_struct newtype_struct seq tuple tuple_struct map
+        struct enum identifier ignored_any
+    }
+}
+
+impl<'de> de::Deserializer<'de> for ConfigValue {
+    type Error = DeError;
+
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        match self {
+            // TODO: path
+            CV::Integer(i, _path) => visitor.visit_i64(i),
+            CV::String(s, _path) => visitor.visit_string(s),
+            CV::List(_, _) => unimplemented!(),
+            CV::Table(_, _) => panic!("Map access only"),
+            CV::Boolean(b, _path) => visitor.visit_bool(b),
+        }
+    }
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_some(self)
+    }
+
+    forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes
+        byte_buf unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct enum identifier ignored_any
     }
 }
 
