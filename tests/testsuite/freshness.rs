@@ -489,7 +489,16 @@ fn changing_bin_paths_common_target_features_caches_targets() {
     );
 }
 
-#[test]
+#[test] fn changing_bin_features_caches_targets1() { changing_bin_features_caches_targets(); }
+#[test] fn changing_bin_features_caches_targets2() { changing_bin_features_caches_targets(); }
+#[test] fn changing_bin_features_caches_targets3() { changing_bin_features_caches_targets(); }
+#[test] fn changing_bin_features_caches_targets4() { changing_bin_features_caches_targets(); }
+#[test] fn changing_bin_features_caches_targets5() { changing_bin_features_caches_targets(); }
+#[test] fn changing_bin_features_caches_targets6() { changing_bin_features_caches_targets(); }
+#[test] fn changing_bin_features_caches_targets7() { changing_bin_features_caches_targets(); }
+#[test] fn changing_bin_features_caches_targets8() { changing_bin_features_caches_targets(); }
+
+
 fn changing_bin_features_caches_targets() {
     let p = project("foo")
         .file(
@@ -522,9 +531,12 @@ fn changing_bin_features_caches_targets() {
     let foo_proc = |name: &str| {
         let src = p.bin("foo");
         let dst = p.bin(name);
-        fs::copy(&src, &dst).expect("Failed to copy foo");
+        fs::hard_link(&src, &dst).expect("Failed to link foo");
         p.process(dst)
     };
+
+    for _ in 0..100 {
+    p.root().join("target").rm_rf();
 
     assert_that(
         p.cargo("build"),
@@ -581,6 +593,7 @@ fn changing_bin_features_caches_targets() {
         foo_proc("on2"),
         execs().with_status(0).with_stdout("feature on"),
     );
+}
 }
 
 #[test]
