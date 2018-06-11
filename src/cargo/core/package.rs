@@ -105,6 +105,9 @@ impl Package {
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
     }
+    pub fn manifest_mut(&mut self) -> &mut Manifest {
+        &mut self.manifest
+    }
     /// Get the path to the manifest
     pub fn manifest_path(&self) -> &Path {
         &self.manifest_path

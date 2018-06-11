@@ -44,6 +44,7 @@ pub struct Manifest {
     edition: Edition,
     im_a_teapot: Option<bool>,
     default_run: Option<String>,
+    metabuild: Option<Vec<String>>,
 }
 
 /// When parsing `Cargo.toml`, some warnings should silenced
@@ -300,6 +301,7 @@ impl Manifest {
         im_a_teapot: Option<bool>,
         default_run: Option<String>,
         original: Rc<TomlManifest>,
+        metabuild: Option<Vec<String>>,
     ) -> Manifest {
         Manifest {
             summary,
@@ -321,6 +323,7 @@ impl Manifest {
             im_a_teapot,
             default_run,
             publish_lockfile,
+            metabuild,
         }
     }
 
@@ -347,6 +350,9 @@ impl Manifest {
     }
     pub fn targets(&self) -> &[Target] {
         &self.targets
+    }
+    pub fn targets_mut(&mut self) -> &mut[Target] {
+        &mut self.targets
     }
     pub fn version(&self) -> &Version {
         self.package_id().version()
@@ -442,6 +448,10 @@ impl Manifest {
 
     pub fn default_run(&self) -> Option<&str> {
         self.default_run.as_ref().map(|s| &s[..])
+    }
+
+    pub fn metabuild(&self) -> Option<&Vec<String>> {
+        self.metabuild.as_ref()
     }
 }
 
@@ -744,6 +754,11 @@ impl Target {
     }
     pub fn set_doc(&mut self, doc: bool) -> &mut Target {
         self.doc = doc;
+        self
+    }
+    pub fn set_src_path(&mut self, src_path: PathBuf) -> &mut Target {
+        assert!(src_path.is_absolute());
+        self.src_path =  NonHashedPathBuf { path: src_path };
         self
     }
 }

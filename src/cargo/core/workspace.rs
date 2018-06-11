@@ -1,6 +1,9 @@
+#![allow(deprecated)] // for SipHasher
+
 use std::cell::RefCell;
 use std::collections::hash_map::{Entry, HashMap};
 use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher, SipHasher};
 use std::path::{Path, PathBuf};
 use std::slice;
 
@@ -150,6 +153,7 @@ impl<'cfg> Workspace<'cfg> {
         };
         ws.root_manifest = ws.find_root(manifest_path)?;
         ws.find_members()?;
+        ws.fixup()?;
         ws.validate()?;
         Ok(ws)
     }
@@ -513,6 +517,11 @@ impl<'cfg> Workspace<'cfg> {
         Ok(())
     }
 
+    fn fixup(&mut self) -> CargoResult<()> {
+        let target_dir = self.target_dir();
+        self.packages.fixup(target_dir)
+    }
+
     /// Validates a workspace, ensuring that a number of invariants are upheld:
     ///
     /// 1. A workspace only has one root.
@@ -772,6 +781,29 @@ impl<'cfg> Packages<'cfg> {
                 }))
             }
         }
+    }
+
+    fn fixup(&mut self, target_dir: Filesystem) -> CargoResult<()> {
+        for maybe_pkg in self.packages.values_mut() {
+            if let MaybePackage::Package(pkg) = maybe_pkg {
+                let mut hasher = SipHasher::new_with_keys(0, 0);
+                pkg.hash(&mut hasher);
+                let hash = hasher.finish();
+                let name = pkg.name();
+                for target in pkg.manifest_mut().targets_mut().iter_mut() {
+                    // TODO: Don't rely on magic name?
+                    if target.is_custom_build()
+                        && target.src_path().file_name().unwrap() == "metabuild.rs"
+                    {
+                        let path = target_dir
+                            .join(".metabuild")
+                            .join(format!("metabuild-{}-{:016x}.rs", name, hash));
+                        target.set_src_path(path.into_path_unlocked());
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
