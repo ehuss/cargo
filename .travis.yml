@@ -44,7 +44,6 @@ before_script:
 script:
   - cargo test --test testsuite -- changing_bin_features_caches_targets
   - cargo test --test testsuite -- changing_bin_features_caches_targets
-  - cargo test --test testsuite -- changing_bin_features_caches_targets
 
 notifications:
   email:
