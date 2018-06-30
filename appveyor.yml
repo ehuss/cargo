@@ -18,6 +18,6 @@ clone_depth: 1
 build: false
 
 test_script:
-  - cargo test --test testsuite -- changing_bin_features_caches_targets --nocapture
-  - cargo test --test testsuite -- changing_bin_features_caches_targets --nocapture
-  - cargo test --test testsuite -- changing_bin_features_caches_targets --nocapture
+  - cargo test --test testsuite -- changing_bin_features_caches_targets
+  - cargo test --test testsuite -- changing_bin_features_caches_targets
+  - cargo test --test testsuite -- changing_bin_features_caches_targets
