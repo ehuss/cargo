@@ -58,7 +58,7 @@ fn deps_of<'a, 'b, 'cfg>(
     // requested unit's settings are the same as `Any`, `CustomBuild` can't
     // affect anything else in the hierarchy.
     if !deps.contains_key(unit) {
-        let unit_deps = compute_deps(unit, bcx, deps, profile_for)?;
+        let unit_deps = compute_deps(unit, bcx, profile_for)?;
         let to_insert: Vec<_> = unit_deps.iter().map(|&(unit, _)| unit).collect();
         deps.insert(*unit, to_insert);
         for (unit, profile_for) in unit_deps {
@@ -75,11 +75,10 @@ fn deps_of<'a, 'b, 'cfg>(
 fn compute_deps<'a, 'b, 'cfg>(
     unit: &Unit<'a>,
     bcx: &BuildContext<'a, 'cfg>,
-    deps: &'b mut HashMap<Unit<'a>, Vec<Unit<'a>>>,
     profile_for: ProfileFor,
 ) -> CargoResult<Vec<(Unit<'a>, ProfileFor)>> {
     if unit.mode.is_run_custom_build() {
-        return compute_deps_custom_build(unit, bcx, deps);
+        return compute_deps_custom_build(unit, bcx);
     } else if unit.mode.is_doc() && !unit.mode.is_any_test() {
         // Note: This does not include Doctest.
         return compute_deps_doc(unit, bcx);
@@ -192,20 +191,27 @@ fn compute_deps<'a, 'b, 'cfg>(
 fn compute_deps_custom_build<'a, 'cfg>(
     unit: &Unit<'a>,
     bcx: &BuildContext<'a, 'cfg>,
-    deps: &mut HashMap<Unit<'a>, Vec<Unit<'a>>>,
 ) -> CargoResult<Vec<(Unit<'a>, ProfileFor)>> {
     // When not overridden, then the dependencies to run a build script are:
     //
     // 1. Compiling the build script itself
     // 2. For each immediate dependency of our package which has a `links`
     //    key, the execution of that build script.
-    let deps = deps
+    let not_custom_build = unit.pkg
+        .targets()
         .iter()
-        .find(|(key, _deps)| key.pkg == unit.pkg && !key.target.is_custom_build())
-        .expect("can't find package deps")
-        .1;
+        .find(|t| !t.is_custom_build())
+        .unwrap();
+    let tmp = Unit {
+        pkg: unit.pkg,
+        target: not_custom_build,
+        profile: unit.profile,
+        kind: unit.kind,
+        mode: CompileMode::Build,
+    };
+    let deps = compute_deps(&tmp, bcx, ProfileFor::Any)?;
     Ok(deps.iter()
-        .filter_map(|unit| {
+        .filter_map(|(unit, _)| {
             if !unit.target.linkable() || unit.pkg.manifest().links().is_none() {
                 return None;
             }
