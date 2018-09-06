@@ -28,4 +28,4 @@ test_script:
   # - if defined MINIMAL_VERSIONS cargo +nightly generate-lockfile -Z minimal-versions && cargo +stable test
   # so we just run `cargo check --tests` like
   - if defined MINIMAL_VERSIONS cargo +nightly generate-lockfile -Z minimal-versions && cargo check --tests
-  - if NOT defined MINIMAL_VERSIONS cargo test
+  - if NOT defined MINIMAL_VERSIONS cargo test --test testsuite -- fix_path_deps
