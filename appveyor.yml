@@ -1,8 +1,8 @@
 environment:
   matrix:
-  - TARGET: x86_64-pc-windows-msvc
-    OTHER_TARGET: i686-pc-windows-msvc
-    MAKE_TARGETS: test-unit-x86_64-pc-windows-msvc
+  # - TARGET: x86_64-pc-windows-msvc
+  #   OTHER_TARGET: i686-pc-windows-msvc
+  #   MAKE_TARGETS: test-unit-x86_64-pc-windows-msvc
   - TARGET: x86_64-pc-windows-msvc
     OTHER_TARGET: i686-pc-windows-msvc
     MAKE_TARGETS: test-unit-x86_64-pc-windows-msvc
@@ -28,5 +28,5 @@ test_script:
   # we don't have ci time to run the full `cargo test` with `minimal-versions` like
   # - if defined MINIMAL_VERSIONS cargo +nightly generate-lockfile -Z minimal-versions && cargo +stable test
   # so we just run `cargo check --tests` like
-  - if defined MINIMAL_VERSIONS cargo +nightly generate-lockfile -Z minimal-versions && cargo check --tests
-  - if NOT defined MINIMAL_VERSIONS cargo test
+  - if defined MINIMAL_VERSIONS cargo +nightly generate-lockfile -Z minimal-versions && cargo -V && rustc -V && cargo check --tests
+#  - if NOT defined MINIMAL_VERSIONS cargo test
