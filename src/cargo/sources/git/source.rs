@@ -5,7 +5,7 @@ use url::Url;
 use core::source::{Source, SourceId, MaybePackage};
 use core::GitReference;
 use core::{Dependency, Package, PackageId, Summary};
-use util::Config;
+use util::{Config, FileLock, Filesystem};
 use util::errors::CargoResult;
 use util::hex::short_hash;
 use sources::PathSource;
@@ -222,7 +222,11 @@ impl<'cfg> Source for GitSource<'cfg> {
             .download(id)
     }
 
-    fn finish_download(&mut self, _id: &PackageId, _data: Vec<u8>) -> CargoResult<Package> {
+    fn save_download(&mut self, _package: &PackageId, _contents: Vec<u8>) -> CargoResult<(Filesystem, FileLock)> {
+        panic!("no downloads to do")
+    }
+
+    fn finish_download(&mut self, _package: &PackageId, _path: FileLock) -> CargoResult<Package> {
         panic!("no download should have started")
     }
 

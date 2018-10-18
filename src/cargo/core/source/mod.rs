@@ -2,7 +2,7 @@ use std::collections::hash_map::HashMap;
 use std::fmt;
 
 use core::{Dependency, Package, PackageId, Summary};
-use util::CargoResult;
+use util::{CargoResult, FileLock, Filesystem};
 
 mod source_id;
 
@@ -51,7 +51,8 @@ pub trait Source {
     /// version specified.
     fn download(&mut self, package: &PackageId) -> CargoResult<MaybePackage>;
 
-    fn finish_download(&mut self, package: &PackageId, contents: Vec<u8>) -> CargoResult<Package>;
+    fn save_download(&mut self, package: &PackageId, contents: Vec<u8>) -> CargoResult<(Filesystem, FileLock)>;
+    fn finish_download(&mut self, package: &PackageId, path: FileLock) -> CargoResult<Package>;
 
     /// Generates a unique string which represents the fingerprint of the
     /// current state of the source.
@@ -131,8 +132,12 @@ impl<'a, T: Source + ?Sized + 'a> Source for Box<T> {
         (**self).download(id)
     }
 
-    fn finish_download(&mut self, id: &PackageId, data: Vec<u8>) -> CargoResult<Package> {
-        (**self).finish_download(id, data)
+    fn save_download(&mut self, package: &PackageId, contents: Vec<u8>) -> CargoResult<(Filesystem, FileLock)> {
+        (**self).save_download(package, contents)
+    }
+
+    fn finish_download(&mut self, package: &PackageId, path: FileLock) -> CargoResult<Package> {
+        (**self).finish_download(package, path)
     }
 
     /// Forwards to `Source::fingerprint`
@@ -187,8 +192,12 @@ impl<'a, T: Source + ?Sized + 'a> Source for &'a mut T {
         (**self).download(id)
     }
 
-    fn finish_download(&mut self, id: &PackageId, data: Vec<u8>) -> CargoResult<Package> {
-        (**self).finish_download(id, data)
+    fn save_download(&mut self, package: &PackageId, contents: Vec<u8>) -> CargoResult<(Filesystem, FileLock)> {
+        (**self).save_download(package, contents)
+    }
+
+    fn finish_download(&mut self, package: &PackageId, path: FileLock) -> CargoResult<Package> {
+        (**self).finish_download(package, path)
     }
 
     fn fingerprint(&self, pkg: &Package) -> CargoResult<String> {

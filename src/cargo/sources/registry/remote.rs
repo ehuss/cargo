@@ -237,7 +237,7 @@ impl<'cfg> RegistryData for RemoteRegistry<'cfg> {
         Ok(MaybeLock::Download { url, descriptor: pkg.to_string() })
     }
 
-    fn finish_download(&mut self, pkg: &PackageId, checksum: &str, data: &[u8])
+    fn save_download(&mut self, pkg: &PackageId, checksum: &str, data: &[u8])
         -> CargoResult<FileLock>
     {
         // Verify what we just downloaded

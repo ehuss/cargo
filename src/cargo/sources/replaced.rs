@@ -1,5 +1,6 @@
 use core::{Dependency, Package, PackageId, Source, SourceId, Summary};
 use core::source::MaybePackage;
+use util::{FileLock, Filesystem};
 use util::errors::{CargoResult, CargoResultExt};
 
 pub struct ReplacedSource<'cfg> {
@@ -85,12 +86,14 @@ impl<'cfg> Source for ReplacedSource<'cfg> {
         })
     }
 
-    fn finish_download(&mut self, id: &PackageId, data: Vec<u8>)
-        -> CargoResult<Package>
-    {
-        let id = id.with_source_id(&self.replace_with);
-        let pkg = self.inner
-            .finish_download(&id, data)
+    fn save_download(&mut self, package: &PackageId, contents: Vec<u8>) -> CargoResult<(Filesystem, FileLock)> {
+        let id = package.with_source_id(&self.replace_with);
+        self.inner.save_download(&id, contents)
+    }
+
+    fn finish_download(&mut self, package: &PackageId, path: FileLock) -> CargoResult<Package> {
+        let id = package.with_source_id(&self.replace_with);
+        let pkg = self.inner.finish_download(&id, path)
             .chain_err(|| format!("failed to download replaced source {}", self.to_replace))?;
         Ok(pkg.map_source(&self.replace_with, &self.to_replace))
     }

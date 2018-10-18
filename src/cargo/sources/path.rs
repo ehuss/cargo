@@ -11,7 +11,7 @@ use ignore::gitignore::GitignoreBuilder;
 use core::{Dependency, Package, PackageId, Source, SourceId, Summary};
 use core::source::MaybePackage;
 use ops;
-use util::{self, internal, CargoResult};
+use util::{self, internal, CargoResult, FileLock, Filesystem};
 use util::paths;
 use util::Config;
 
@@ -550,7 +550,11 @@ impl<'cfg> Source for PathSource<'cfg> {
             .ok_or_else(|| internal(format!("failed to find {} in path source", id)))
     }
 
-    fn finish_download(&mut self, _id: &PackageId, _data: Vec<u8>) -> CargoResult<Package> {
+    fn save_download(&mut self, _package: &PackageId, _contents: Vec<u8>) -> CargoResult<(Filesystem, FileLock)> {
+        panic!("no download should have started")
+    }
+
+    fn finish_download(&mut self, _package: &PackageId, _path: FileLock) -> CargoResult<Package> {
         panic!("no download should have started")
     }
 

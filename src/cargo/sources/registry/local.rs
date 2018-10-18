@@ -104,7 +104,7 @@ impl<'cfg> RegistryData for LocalRegistry<'cfg> {
         Ok(MaybeLock::Ready(crate_file))
     }
 
-    fn finish_download(&mut self, _pkg: &PackageId, _checksum: &str, _data: &[u8])
+    fn save_download(&mut self, _pkg: &PackageId, _checksum: &str, _data: &[u8])
         -> CargoResult<FileLock>
     {
         panic!("this source doesn't download")

@@ -350,7 +350,7 @@ pub trait RegistryData {
     fn config(&mut self) -> CargoResult<Option<RegistryConfig>>;
     fn update_index(&mut self) -> CargoResult<()>;
     fn download(&mut self, pkg: &PackageId, checksum: &str) -> CargoResult<MaybeLock>;
-    fn finish_download(&mut self, pkg: &PackageId, checksum: &str, data: &[u8])
+    fn save_download(&mut self, pkg: &PackageId, checksum: &str, data: &[u8])
         -> CargoResult<FileLock>;
 
     fn is_crate_downloaded(&self, _pkg: &PackageId) -> bool {
@@ -411,59 +411,6 @@ impl<'cfg> RegistrySource<'cfg> {
         self.ops.config()
     }
 
-    /// Unpacks a downloaded package into a location where it's ready to be
-    /// compiled.
-    ///
-    /// No action is taken if the source looks like it's already unpacked.
-    fn unpack_package(&self, pkg: &PackageId, tarball: &FileLock) -> CargoResult<PathBuf> {
-        let dst = self
-            .src_path
-            .join(&format!("{}-{}", pkg.name(), pkg.version()));
-        dst.create_dir()?;
-        // Note that we've already got the `tarball` locked above, and that
-        // implies a lock on the unpacked destination as well, so this access
-        // via `into_path_unlocked` should be ok.
-        let dst = dst.into_path_unlocked();
-        let ok = dst.join(".cargo-ok");
-        if ok.exists() {
-            return Ok(dst);
-        }
-
-        let gz = GzDecoder::new(tarball.file());
-        let mut tar = Archive::new(gz);
-        let prefix = dst.file_name().unwrap();
-        let parent = dst.parent().unwrap();
-        for entry in tar.entries()? {
-            let mut entry = entry.chain_err(|| "failed to iterate over archive")?;
-            let entry_path = entry
-                .path()
-                .chain_err(|| "failed to read entry path")?
-                .into_owned();
-
-            // We're going to unpack this tarball into the global source
-            // directory, but we want to make sure that it doesn't accidentally
-            // (or maliciously) overwrite source code from other crates. Cargo
-            // itself should never generate a tarball that hits this error, and
-            // crates.io should also block uploads with these sorts of tarballs,
-            // but be extra sure by adding a check here as well.
-            if !entry_path.starts_with(prefix) {
-                bail!(
-                    "invalid tarball downloaded, contains \
-                     a file at {:?} which isn't under {:?}",
-                    entry_path,
-                    prefix
-                )
-            }
-
-            // Once that's verified, unpack the entry as usual.
-            entry
-                .unpack_in(parent)
-                .chain_err(|| format!("failed to unpack entry at `{}`", entry_path.display()))?;
-        }
-        File::create(&ok)?;
-        Ok(dst.clone())
-    }
-
     fn do_update(&mut self) -> CargoResult<()> {
         self.ops.update_index()?;
         let path = self.ops.index_path();
@@ -473,8 +420,7 @@ impl<'cfg> RegistrySource<'cfg> {
     }
 
     fn get_pkg(&mut self, package: &PackageId, path: FileLock) -> CargoResult<Package> {
-        let path = self
-            .unpack_package(package, &path)
+        let path = unpack_package(&self.src_path, package, &path)
             .chain_err(|| internal(format!("failed to unpack package `{}`", package)))?;
         let mut src = PathSource::new(&path, &self.source_id, self.config);
         src.update()?;
@@ -575,12 +521,14 @@ impl<'cfg> Source for RegistrySource<'cfg> {
         }
     }
 
-    fn finish_download(&mut self, package: &PackageId, data: Vec<u8>)
-        -> CargoResult<Package>
-    {
+    fn save_download(&mut self, package: &PackageId, contents: Vec<u8>) -> CargoResult<(Filesystem, FileLock)> {
         let hash = self.index.hash(package, &mut *self.ops)?;
-        let file = self.ops.finish_download(package, &hash, &data)?;
-        self.get_pkg(package, file)
+        let file = self.ops.save_download(package, &hash, &contents)?;
+        Ok((self.src_path.clone(), file))
+    }
+
+    fn finish_download(&mut self, package: &PackageId, path: FileLock) -> CargoResult<Package> {
+        self.get_pkg(package, path)
     }
 
     fn fingerprint(&self, pkg: &Package) -> CargoResult<String> {
@@ -590,4 +538,55 @@ impl<'cfg> Source for RegistrySource<'cfg> {
     fn describe(&self) -> String {
         self.source_id.display_registry()
     }
+}
+
+/// Unpacks a downloaded package into a location where it's ready to be
+/// compiled.
+///
+/// No action is taken if the source looks like it's already unpacked.
+pub fn unpack_package(src_path: &Filesystem, pkg: &PackageId, tarball: &FileLock) -> CargoResult<PathBuf> {
+    let dst = src_path.join(&format!("{}-{}", pkg.name(), pkg.version()));
+    dst.create_dir()?;
+    // Note that we've already got the `tarball` locked above, and that
+    // implies a lock on the unpacked destination as well, so this access
+    // via `into_path_unlocked` should be ok.
+    let dst = dst.into_path_unlocked();
+    let ok = dst.join(".cargo-ok");
+    if ok.exists() {
+        return Ok(dst);
+    }
+
+    let gz = GzDecoder::new(tarball.file());
+    let mut tar = Archive::new(gz);
+    let prefix = dst.file_name().unwrap();
+    let parent = dst.parent().unwrap();
+    for entry in tar.entries()? {
+        let mut entry = entry.chain_err(|| "failed to iterate over archive")?;
+        let entry_path = entry
+            .path()
+            .chain_err(|| "failed to read entry path")?
+            .into_owned();
+
+        // We're going to unpack this tarball into the global source
+        // directory, but we want to make sure that it doesn't accidentally
+        // (or maliciously) overwrite source code from other crates. Cargo
+        // itself should never generate a tarball that hits this error, and
+        // crates.io should also block uploads with these sorts of tarballs,
+        // but be extra sure by adding a check here as well.
+        if !entry_path.starts_with(prefix) {
+            bail!(
+                "invalid tarball downloaded, contains \
+                 a file at {:?} which isn't under {:?}",
+                entry_path,
+                prefix
+            )
+        }
+
+        // Once that's verified, unpack the entry as usual.
+        entry
+            .unpack_in(parent)
+            .chain_err(|| format!("failed to unpack entry at `{}`", entry_path.display()))?;
+    }
+    File::create(&ok)?;
+    Ok(dst.clone())
 }

@@ -11,7 +11,7 @@ use serde_json;
 use core::{Dependency, Package, PackageId, Source, SourceId, Summary};
 use core::source::MaybePackage;
 use sources::PathSource;
-use util::{Config, Sha256};
+use util::{Config, FileLock, Filesystem, Sha256};
 use util::errors::{CargoResult, CargoResultExt};
 use util::paths;
 
@@ -160,7 +160,11 @@ impl<'cfg> Source for DirectorySource<'cfg> {
             .ok_or_else(|| format_err!("failed to find package with id: {}", id))
     }
 
-    fn finish_download(&mut self, _id: &PackageId, _data: Vec<u8>) -> CargoResult<Package> {
+    fn save_download(&mut self, _package: &PackageId, _contents: Vec<u8>) -> CargoResult<(Filesystem, FileLock)> {
+        panic!("no downloads to do")
+    }
+
+    fn finish_download(&mut self, _package: &PackageId, _path: FileLock) -> CargoResult<Package> {
         panic!("no downloads to do")
     }
 
