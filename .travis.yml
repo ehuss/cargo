@@ -22,7 +22,7 @@ matrix:
     - env: TARGET=x86_64-apple-darwin
            ALT=i686-apple-darwin
       os: osx
-      osx_image: xcode9.4
+      osx_image: xcode9.2
       if: branch != master OR type = pull_request
 
     # - env: TARGET=x86_64-unknown-linux-gnu
@@ -61,6 +61,7 @@ matrix:
 before_script:
   - time rustup target add $ALT
 script:
+  - python fs_test.py
   - df .
   - mount
   - sysctl -a | grep cpu
