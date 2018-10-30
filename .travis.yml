@@ -69,7 +69,7 @@ script:
   - system_profiler -detailLevel mini
   - time cargo fetch
   - time cargo build --test testsuite
-  - cargo test | ts -s "%.S"
+  - cargo test | ts -s "%.s"
 
 notifications:
   email:
