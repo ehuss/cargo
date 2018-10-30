@@ -65,6 +65,7 @@ script:
   - mount
   - sysctl -a | grep cpu
   - system_profiler -detailLevel mini
+  - time cargo fetch
   - time cargo build --test testsuite
   - time cargo test
 
