@@ -59,13 +59,14 @@ matrix:
     - rust: stable
 
 before_script:
-  - rustup target add $ALT
+  - time rustup target add $ALT
 script:
   - df .
   - mount
   - sysctl -a | grep cpu
   - system_profiler -detailLevel mini
-  - cargo test
+  - time cargo build --test testsuite
+  - time cargo test
 
 notifications:
   email:
