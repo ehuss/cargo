@@ -61,6 +61,9 @@ matrix:
 before_script:
   - rustup target add $ALT
 script:
+  - mount
+  - sysctl -a | grep cpu
+  - system_profiler -detailLevel mini
   - cargo test
 
 notifications:
