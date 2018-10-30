@@ -61,6 +61,7 @@ matrix:
 before_script:
   - time rustup target add $ALT
 script:
+  - brew install moreutils
   - python fs_test.py
   - df .
   - mount
@@ -68,7 +69,7 @@ script:
   - system_profiler -detailLevel mini
   - time cargo fetch
   - time cargo build --test testsuite
-  - time cargo test
+  - cargo test | ts -s "%.S"
 
 notifications:
   email:
