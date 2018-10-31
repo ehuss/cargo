@@ -67,21 +67,22 @@ matrix:
 # before_script:
 #   - time rustup target add $ALT
 script:
-  - brew install moreutils
+  # - brew install moreutils
   # - python fs_test.py
   # - df .
   # - mount
   # - sysctl -a | grep cpu
   # - system_profiler -detailLevel mini
   # - time cargo fetch
-  - time cargo build --test testsuite --bins
-  - time cargo test --test testsuite profile_targets::test_speed_create_project | ts -s "%.s"
+  # - time cargo build --test testsuite --bins
+  # - time cargo test --test testsuite profile_targets::test_speed_create_project | ts -s "%.s"
+  - time python test_create.py
 
 notifications:
   email:
     on_success: never
 
-addons:
-  apt:
-    packages:
-      - gcc-multilib
+# addons:
+#   apt:
+#     packages:
+#       - gcc-multilib
