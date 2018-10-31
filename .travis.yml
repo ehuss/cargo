@@ -62,15 +62,19 @@ matrix:
 # before_script:
 #   - time rustup target add $ALT
 script:
-  - brew install moreutils
-  - python fs_test.py
-  - df .
-  - mount
-  - sysctl -a | grep cpu
-  - system_profiler -detailLevel mini
-  - time cargo fetch
-  - time cargo build --test testsuite
-  - cargo test | ts -s "%.s"
+  - brew install fio
+  - fio --randrepeat=1 --ioengine=posixaio --direct=1 --gtod_reduce=1 --name=test --filename=test --bs=4k --iodepth=64 --size=4G --readwrite=randrw --rwmixread=75
+  - fio --randrepeat=1 --direct=1 --gtod_reduce=1 --name=test --filename=test --bs=4k --iodepth=64 --size=4G --readwrite=randrw --rwmixread=75
+  - fio --randrepeat=1 --gtod_reduce=1 --name=test --filename=test --bs=4k --iodepth=64 --size=4G --readwrite=randrw --rwmixread=75
+  # - brew install moreutils
+  # - python fs_test.py
+  # - df .
+  # - mount
+  # - sysctl -a | grep cpu
+  # - system_profiler -detailLevel mini
+  # - time cargo fetch
+  # - time cargo build --test testsuite
+  # - cargo test | ts -s "%.s"
 
 notifications:
   email:
