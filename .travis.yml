@@ -75,7 +75,7 @@ script:
   # - system_profiler -detailLevel mini
   # - time cargo fetch
   - time cargo build --test testsuite --bins
-  - time cargo test --test testsuite build::test_project_speed | ts -s "%.s"
+  - time cargo test --test testsuite profile_targets::test_speed_create_project | ts -s "%.s"
 
 notifications:
   email:
