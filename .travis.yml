@@ -1,7 +1,7 @@
-language: rust
-rust: stable
-sudo: required
-dist: trusty
+language: generic
+# rust: stable
+# sudo: required
+# dist: trusty
 
 git:
   depth: 1
@@ -10,9 +10,9 @@ git:
 # doesn't work well: the cache is large and it takes several minutes
 # to move it to and from S3. So instead we only cache the mdbook
 # binary.
-cache:
-  directories:
-    - $HOME/.cargo/bin/
+# cache:
+#   directories:
+#     - $HOME/.cargo/bin/
 
 matrix:
   include:
@@ -61,13 +61,14 @@ matrix:
     #     - (cd src/doc && mdbook build --dest-dir ../../target/doc)
     #   if: branch != master OR type = pull_request
 
-  exclude:
-    - rust: stable
+  # exclude:
+  #   - rust: stable
 
 # before_script:
 #   - time rustup target add $ALT
 script:
-  # - brew install moreutils
+  - brew install p7zip
+  - 7z b 2 -mm=\*
   # - python fs_test.py
   # - df .
   # - mount
@@ -76,7 +77,6 @@ script:
   # - time cargo fetch
   # - time cargo build --test testsuite --bins
   # - time cargo test --test testsuite profile_targets::test_speed_create_project | ts -s "%.s"
-  - time python test_create.py
 
 notifications:
   email:
