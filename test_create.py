@@ -68,7 +68,7 @@ def mk(n):
 
 def main():
     os.mkdir('tc')
-    for n in range(0, 5000):
+    for n in range(0, 50000):
         mk(n)
 
 
