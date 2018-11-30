@@ -31,7 +31,7 @@ pub fn dylib_path_envvar() -> &'static str {
     if cfg!(windows) {
         "PATH"
     } else if cfg!(target_os = "macos") {
-        "DYLD_LIBRARY_PATH"
+        "DYLD_FALLBACK_LIBRARY_PATH"
     } else {
         "LD_LIBRARY_PATH"
     }
