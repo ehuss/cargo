@@ -65,7 +65,7 @@ matrix:
 before_script:
   - rustup target add $ALT
 script:
-  - export PATH=~/.rustup/toolchains/stable-x86_64-apple-darwin/bin:$PATH
+  # - export PATH=~/.rustup/toolchains/stable-x86_64-apple-darwin/bin:$PATH
   - time -p cargo build
   - time -p target/debug/cargo build --tests
   - 'time -p target/debug/cargo test --test testsuite'
