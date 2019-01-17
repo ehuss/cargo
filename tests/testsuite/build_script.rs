@@ -3572,9 +3572,12 @@ fn switch_features_rerun() {
         )
         .build();
 
-    p.cargo("run -v --features=foo").with_stdout("foo\n").run();
-    p.cargo("run -v").with_stdout("bar\n").run();
-    p.cargo("run -v --features=foo").with_stdout("foo\n").run();
+    p.cargo("build -v --features=foo").run();
+    p.safely_rename_run("foo", "with_foo").with_stdout("foo\n").run();
+    p.cargo("build -v").run();
+    p.safely_rename_run("foo", "without_foo").with_stdout("bar\n").run();
+    p.cargo("build -v --features=foo").run();
+    p.safely_rename_run("foo", "with_foo").with_stdout("foo\n").run();
 }
 
 #[test]

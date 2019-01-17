@@ -28,3 +28,4 @@ test_script:
   # - if defined MINIMAL_VERSIONS cargo +nightly generate-lockfile -Z minimal-versions && cargo +1.31.0 check --tests --features=deny-warnings
   # - if NOT defined MINIMAL_VERSIONS cargo test --features=deny-warnings
   - cargo test --test testsuite -- switch_features_rerun
+  - cargo test --test testsuite -- changing_bin_features_caches_targets

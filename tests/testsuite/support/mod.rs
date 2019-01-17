@@ -399,6 +399,17 @@ impl Project {
         execs
     }
 
+    // Windows has a problem with replacing a binary that was just executed.
+    // Unlinking it will succeed, but then attempting to immediately replace
+    // it will sometimes fail with "Already Exists".
+    // See https://github.com/rust-lang/cargo/issues/5481
+    pub fn safely_rename_run(&self, src: &str, dst: &str) -> Execs {
+        let src = self.bin(src);
+        let dst = self.bin(dst);
+        fs::rename(&src, &dst).unwrap_or_else(|e| panic!("Failed to rename `{:?}` to `{:?}`: {}", src, dst, e));
+        self.process(dst)
+    }
+
     /// Returns the contents of `Cargo.lock`.
     pub fn read_lockfile(&self) -> String {
         self.read_file("Cargo.lock")
