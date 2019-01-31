@@ -77,7 +77,9 @@ continuous integration systems.",
 pub fn exec(config: &mut Config, args: &ArgMatches<'_>) -> CliResult {
     let registry = args.registry(config)?;
 
-    config.reload_rooted_at_cargo_home()?;
+    if !args.is_present("path") {
+        config.reload_rooted_at_cargo_home()?;
+    }
 
     let workspace = args.workspace(config).ok();
     let mut compile_opts = args.compile_options(config, CompileMode::Build, workspace.as_ref())?;

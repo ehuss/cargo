@@ -4,7 +4,9 @@ use std::io::prelude::*;
 
 use crate::support::cross_compile;
 use crate::support::git;
-use crate::support::install::{assert_has_installed_exe, assert_has_not_installed_exe, cargo_home};
+use crate::support::install::{
+    assert_has_installed_exe, assert_has_not_installed_exe, cargo_home, exe,
+};
 use crate::support::paths;
 use crate::support::registry::Package;
 use crate::support::{basic_manifest, cargo_process, project};
@@ -1361,4 +1363,28 @@ fn install_global_cargo_config() {
         .with_status(101)
         .with_stderr_contains("[..]--target nonexistent[..]")
         .run();
+}
+
+#[test]
+fn install_path_honors_local_cargo_config() {
+    let p = project()
+        .file("src/main.rs", "fn main() {}")
+        .file(
+            ".cargo/config",
+            r#"
+                [build]
+                rustflags = ["--cfg", "xyz"]
+            "#,
+        )
+        .file(
+            "src/main.rs",
+            "fn main() {
+                if cfg!(xyz) { println!(\"it works\"); }
+            }",
+        )
+        .build();
+
+    p.cargo("install --path .").run();
+    let exe = cargo_home().join("bin").join(exe("foo"));
+    p.process(exe).with_stdout("it works").run();
 }
