@@ -151,7 +151,7 @@ fn cargo_build_plan_build_script() {
                 "kind": "Host",
                 "links": "{...}",
                 "outputs": [
-                    "[..]/foo/target/debug/build/[..]/build_script_build-[..]"
+                    "[..]/foo/target/build/[..]/build_script_build-[..]"
                 ],
                 "package_name": "foo",
                 "package_version": "0.5.0",

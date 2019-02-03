@@ -47,16 +47,12 @@ fn cargo_compile_incremental() {
 
     p.cargo("build -v")
         .env("CARGO_INCREMENTAL", "1")
-        .with_stderr_contains(
-            "[RUNNING] `rustc [..] -C incremental=[..]/target/debug/incremental[..]`\n",
-        )
+        .with_stderr_contains("[RUNNING] `rustc [..] -C incremental=[..]/target/incremental[..]`\n")
         .run();
 
     p.cargo("test -v")
         .env("CARGO_INCREMENTAL", "1")
-        .with_stderr_contains(
-            "[RUNNING] `rustc [..] -C incremental=[..]/target/debug/incremental[..]`\n",
-        )
+        .with_stderr_contains("[RUNNING] `rustc [..] -C incremental=[..]/target/incremental[..]`\n")
         .run();
 }
 
@@ -347,7 +343,7 @@ fn cargo_compile_with_forbidden_bin_target_name() {
             version = "0.0.0"
 
             [[bin]]
-            name = "build"
+            name = "examples"
         "#,
         )
         .build();
@@ -359,7 +355,7 @@ fn cargo_compile_with_forbidden_bin_target_name() {
 [ERROR] failed to parse manifest at `[..]`
 
 Caused by:
-  the binary target name `build` is forbidden
+  the binary target name `examples` is forbidden
 ",
         )
         .run();
@@ -4792,4 +4788,22 @@ Caused by:
         )
         .with_status(101)
         .run();
+}
+
+#[test]
+fn build_with_old_deps() {
+    // Older versions of Cargo kept deps in a directory. Make sure reusing a
+    // target directory doesn't cause problems.
+    let p = project().file("src/lib.rs", "").build();
+    p.cargo("build").run();
+    // Remove symlink.
+    let old_deps = p.target_debug_dir().join("deps");
+    fs::remove_file(&old_deps).unwrap();
+    fs::rename(p.build_dir().join("deps"), &old_deps).unwrap();
+    p.cargo("build").run();
+    assert!(old_deps
+        .symlink_metadata()
+        .unwrap()
+        .file_type()
+        .is_symlink());
 }

@@ -6,6 +6,13 @@ use std::io::prelude::*;
 use std::iter;
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(target_os = "redox")]
+pub use std::os::redox::fs::symlink;
+#[cfg(unix)]
+pub use std::os::unix::fs::symlink;
+#[cfg(windows)]
+pub use std::os::windows::fs::symlink_dir as symlink;
+
 use filetime::FileTime;
 
 use crate::util::errors::{CargoResult, CargoResultExt, Internal};

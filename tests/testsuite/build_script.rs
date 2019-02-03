@@ -116,11 +116,7 @@ fn custom_build_env_vars() {
                 assert!(env::var("RUSTC_LINKER").is_err());
             }}
         "#,
-        p.root()
-            .join("target")
-            .join("debug")
-            .join("build")
-            .display()
+        p.root().join("target").join("build").display()
     );
 
     let p = p.file("bar/build.rs", &file_content).build();

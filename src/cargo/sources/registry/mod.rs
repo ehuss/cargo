@@ -431,9 +431,7 @@ impl<'cfg> RegistrySource<'cfg> {
         // unpacked and to lock the directory for unpacking.
         let mut ok = {
             let package_dir = format!("{}-{}", pkg.name(), pkg.version());
-            let dst = self
-                .src_path
-                .join(&package_dir);
+            let dst = self.src_path.join(&package_dir);
             dst.create_dir()?;
 
             // Attempt to open a read-only copy first to avoid an exclusive write

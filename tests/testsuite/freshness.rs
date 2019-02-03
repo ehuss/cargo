@@ -1332,7 +1332,7 @@ fn fingerprint_cleaner_does_not_rebuild() {
         .env("RUSTFLAGS", "-C target-cpu=native")
         .with_stderr("[FINISHED] dev [unoptimized + debuginfo] target(s) in [..]")
         .run();
-    fingerprint_cleaner(p.target_debug_dir(), timestamp);
+    fingerprint_cleaner(p.build_dir(), timestamp);
     // This should not recompile!
     p.cargo("build -Z mtime-on-use")
         .masquerade_as_nightly_cargo()
