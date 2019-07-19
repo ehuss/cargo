@@ -1,6 +1,7 @@
 steps:
   - bash: |
       set -e
+      curl-config --features
       env
       if command -v rustup; then
         echo `command -v rustup` `rustup -V` already installed
