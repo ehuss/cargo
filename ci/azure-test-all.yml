@@ -21,5 +21,5 @@ steps:
 # compiling curl from source on OSX yields linker errors on Azure. It's sort of
 # unclear how to fix these linker errors and why it worked previously on Travis,
 # but if you can remove the `curl` feature please do.
-- bash: cargo test --features 'deny-warnings curl/force-system-lib-on-osx'
+- bash: cargo test --features 'deny-warnings'
   displayName: "cargo test"
