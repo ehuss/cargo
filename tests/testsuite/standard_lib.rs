@@ -110,7 +110,7 @@ fn setup() -> Option<Setup> {
     })
 }
 
-fn enable_build_std(e: &mut Execs, setup: &Setup, arg: Option<&str>) {
+fn enable_build_std(e: &mut Execs, setup: &Setup) {
     // First up, force Cargo to use our "mock sysroot" which mimics what
     // libstd looks like upstream.
     let root = paths::root();
@@ -124,12 +124,7 @@ fn enable_build_std(e: &mut Execs, setup: &Setup, arg: Option<&str>) {
         .join("tests/testsuite/mock-std");
     e.env("__CARGO_TESTS_ONLY_SRC_ROOT", &root);
 
-    // Actually enable `-Zbuild-std` for now
-    let arg = match arg {
-        Some(s) => format!("-Zbuild-std={}", s),
-        None => "-Zbuild-std".to_string(),
-    };
-    e.arg(arg);
+    e.arg("-Zbuild-std");
     e.masquerade_as_nightly_cargo();
 
     // We do various shenanigans to ensure our "mock sysroot" actually links
@@ -157,24 +152,31 @@ fn enable_build_std(e: &mut Execs, setup: &Setup, arg: Option<&str>) {
 // Helper methods used in the tests below
 trait BuildStd: Sized {
     fn build_std(&mut self, setup: &Setup) -> &mut Self;
-    fn build_std_arg(&mut self, setup: &Setup, arg: &str) -> &mut Self;
+    fn build_std_error(&mut self) -> &mut Self;
     fn target_host(&mut self) -> &mut Self;
 }
 
 impl BuildStd for Execs {
     fn build_std(&mut self, setup: &Setup) -> &mut Self {
-        enable_build_std(self, setup, None);
+        enable_build_std(self, setup);
         self
     }
 
-    fn build_std_arg(&mut self, setup: &Setup, arg: &str) -> &mut Self {
-        enable_build_std(self, setup, Some(arg));
-        self
+    /// This is a variant of `build_std` that doesn't set up a mock
+    /// environment, and should only be used for error testing that doesn't
+    /// trigger a build. Be careful checking the output, since concurrent
+    /// tests may still cause "Blocking waiting for file lock on package
+    /// cache" message.
+    fn build_std_error(&mut self) -> &mut Self {
+        self.arg("-Zno-index-update")
+            .arg("-Zbuild-std")
+            .masquerade_as_nightly_cargo()
+            .env_remove("CARGO_HOME")
+            .env_remove("HOME")
     }
 
     fn target_host(&mut self) -> &mut Self {
-        self.arg("--target").arg(rustc_host());
-        self
+        self.arg("--target").arg(rustc_host())
     }
 }
 
@@ -281,6 +283,18 @@ fn lib_nostd() {
     };
     let p = project()
         .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                core = { stdlib = true }
+            "#,
+        )
+        .file(
             "src/lib.rs",
             r#"
                 #![no_std]
@@ -291,7 +305,7 @@ fn lib_nostd() {
         )
         .build();
     p.cargo("build -v --lib")
-        .build_std_arg(&setup, "core")
+        .build_std(&setup)
         .target_host()
         .with_stderr_does_not_contain("[..]libstd[..]")
         .run();
@@ -304,11 +318,23 @@ fn check_core() {
         None => return,
     };
     let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                core = { stdlib = true }
+            "#,
+        )
         .file("src/lib.rs", "#![no_std] fn unused_fn() {}")
         .build();
 
     p.cargo("check -v")
-        .build_std_arg(&setup, "core")
+        .build_std(&setup)
         .target_host()
         .with_stderr_contains("[WARNING] [..]unused_fn[..]`")
         .run();
@@ -557,4 +583,353 @@ fn macro_expanded_shadow() {
         .build();
 
     p.cargo("build -v").build_std(&setup).target_host().run();
+}
+
+#[cargo_test]
+fn config_roots() {
+    // no_std with a dependency with no explicit stdlib dependencies, use the
+    // build.std.roots value instead. Make sure libstd is not built.
+    let setup = match setup() {
+        Some(s) => s,
+        None => return,
+    };
+    Package::new("implicit_dep", "0.1.0")
+        .file(
+            "src/lib.rs",
+            r#"
+                #![no_std]
+                pub fn f() {}
+            "#,
+        )
+        .publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2018"
+
+                [dependencies]
+                implicit_dep = "0.1"
+            "#,
+        )
+        .file(
+            ".cargo/config",
+            r#"
+                [build.std]
+                enabled = true
+                roots = ["core"]
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            r#"
+                #![no_std]
+                pub fn f() { implicit_dep::f(); }
+            "#,
+        )
+        .build();
+
+    p.cargo("build -v --lib")
+        .build_std(&setup)
+        .target_host()
+        .with_stderr_does_not_contain("[..]libstd[..]")
+        .run();
+}
+
+#[cargo_test]
+fn gated_config() {
+    // Ignore the config without `-Zbuild-std`
+    let p = project()
+        .file(
+            ".cargo/config",
+            r#"
+                [build.std]
+                enabled = true
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+    p.cargo("build -v")
+        .with_stderr(
+            "\
+[COMPILING] foo [..]
+[RUNNING] `rustc --crate-name foo src/lib.rs [..]
+[FINISHED] [..]
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn roots_invalid() {
+    // Attempt a default root that doesn't exist.
+    let p = project()
+        .file("src/lib.rs", "")
+        .file(
+            ".cargo/config",
+            r#"
+                [build.std]
+                enabled = true
+                roots = ["pumpernickel"]
+            "#,
+        )
+        .build();
+    p.cargo("build")
+        .target_host()
+        .build_std_error()
+        .with_status(101)
+        .with_stderr_contains(
+            "\
+[ERROR] stdlib dependency `pumpernickel` not found, defined in config `build.std.roots`
+
+Caused by:
+  package ID specification `pumpernickel` matched no packages
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn explicit_invalid() {
+    // Attempt to depend on something that doesn't exist.
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                calamari = { stdlib = true }
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("build")
+        .target_host()
+        .build_std_error()
+        .with_status(101)
+        .with_stderr_contains(
+            "\
+[ERROR] stdlib dependency `calamari` not found, required by package `foo v0.1.0 [..]`
+
+Caused by:
+  package ID specification `calamari` matched no packages
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn explicit_private() {
+    // Attempt to access something built with -Zforce-unstable-if-unmarked
+    // without the corresponding #![feature(rustc_private)].
+    let setup = match setup() {
+        Some(s) => s,
+        None => return,
+    };
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                something-private = { stdlib = true }
+                std = { stdlib = true }
+            "#,
+        )
+        .file("src/lib.rs", "extern crate something_private;")
+        .build();
+
+    p.cargo("build")
+        .build_std(&setup)
+        .target_host()
+        .with_status(101)
+        .with_stderr_contains("error[E0658]: use of unstable library feature 'rustc_private'[..]")
+        .run();
+}
+
+#[cargo_test]
+fn explicit_test() {
+    // Explicit dependency on libtest.
+    let setup = match setup() {
+        Some(s) => s,
+        None => return,
+    };
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dev-dependencies]
+                test = {stdlib = true}
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            r#"
+                #![feature(test)]
+                #[bench]
+                fn b1(b: &mut test::Bencher) {
+                    b.iter(|| ())
+                }
+            "#,
+        )
+        .build();
+
+    // TODO: remove --lib when doc tests are supported
+    p.cargo("test -v --lib")
+        .build_std(&setup)
+        .target_host()
+        .run();
+}
+
+#[cargo_test]
+fn implicit_test_no_harness() {
+    // Do not build libtest if not using a harness.
+    let setup = match setup() {
+        Some(s) => s,
+        None => return,
+    };
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [lib]
+                harness = false
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            r#"
+                #[cfg(test)]
+                fn main() {}
+            "#,
+        )
+        .build();
+
+    p.cargo("test -v")
+        .build_std(&setup)
+        .target_host()
+        .with_stderr_does_not_contain("[COMPILING] test[..]")
+        .run();
+}
+
+#[cargo_test]
+fn skips_target_std_if_not_enabled() {
+    // Don't build an explicit dep if it is an unactivated [target].
+    let manifest = |target| {
+        format!(
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                core = {{ stdlib = true }}
+
+                [target.{}.dependencies]
+                alloc = {{ stdlib = true }}
+            "#,
+            target
+        )
+    };
+
+    let setup = match setup() {
+        Some(s) => s,
+        None => return,
+    };
+    let p = project()
+        .file("Cargo.toml", &manifest("invalid-target"))
+        .file(
+            "src/lib.rs",
+            r#"
+                #![no_std]
+                pub fn foo() {
+                    let _ = alloc::string::String::new();
+                }
+            "#,
+        )
+        .build();
+    p.cargo("build -v")
+        .build_std(&setup)
+        .target_host()
+        .with_status(101)
+        // error[E0433]: failed to resolve: use of undeclared type or module `alloc`
+        .with_stderr_contains("error[E0433][..]")
+        .with_stderr_does_not_contain("[..]liballoc[..]")
+        .run();
+    p.change_file("Cargo.toml", &manifest(&rustc_host()));
+    p.cargo("build -v")
+        .build_std(&setup)
+        .target_host()
+        .with_stderr_contains("[..]liballoc[..]")
+        .run();
+}
+
+#[cargo_test]
+fn optional_std() {
+    let setup = match setup() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                core = { stdlib=true }
+                alloc = { stdlib=true, optional=true }
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            r#"
+                #![no_std]
+                pub fn foo() {
+                    let _ = alloc::string::String::new();
+                }
+            "#,
+        )
+        .build();
+
+    p.cargo("build -v")
+        .build_std(&setup)
+        .target_host()
+        .with_status(101)
+        // error[E0433]: failed to resolve: use of undeclared type or module `alloc`
+        .with_stderr_contains("error[E0433][..]")
+        .with_stderr_does_not_contain("[..]liballoc[..]")
+        .run();
+
+    p.cargo("build -v --features=alloc")
+        .build_std(&setup)
+        .target_host()
+        .with_stderr_contains("[..]liballoc[..]")
+        .run();
 }

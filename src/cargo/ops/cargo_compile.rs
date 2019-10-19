@@ -310,7 +310,7 @@ pub fn compile_ws<'a>(
         targeted_resolve: resolve,
     } = resolve;
 
-    let std_resolve = if let Some(crates) = &config.cli_unstable().build_std {
+    let std_resolve = if build_config.build_std {
         if build_config.build_plan {
             config
                 .shell()
@@ -322,7 +322,7 @@ pub fn compile_ws<'a>(
             // requested_target to an enum, or some other approach.
             failure::bail!("-Zbuild-std requires --target");
         }
-        let (mut std_package_set, std_resolve) = standard_lib::resolve_std(ws, crates)?;
+        let (mut std_package_set, std_resolve) = standard_lib::resolve_std(ws)?;
         remove_dylib_crate_type(&mut std_package_set)?;
         pkg_set.add_set(std_package_set);
         Some(std_resolve)
@@ -400,29 +400,6 @@ pub fn compile_ws<'a>(
         &bcx,
     )?;
 
-    let std_roots = if let Some(crates) = &config.cli_unstable().build_std {
-        // Only build libtest if it looks like it is needed.
-        let mut crates = crates.clone();
-        if !crates.iter().any(|c| c == "test")
-            && units
-                .iter()
-                .any(|unit| unit.mode.is_rustc_test() && unit.target.harness())
-        {
-            // Only build libtest when libstd is built (libtest depends on libstd)
-            if crates.iter().any(|c| c == "std") {
-                crates.push("test".to_string());
-            }
-        }
-        standard_lib::generate_std_roots(
-            &bcx,
-            &crates,
-            std_resolve.as_ref().unwrap(),
-            build_config.requested_kind,
-        )?
-    } else {
-        Vec::new()
-    };
-
     if let Some(args) = extra_args {
         if units.len() != 1 {
             failure::bail!(
@@ -443,7 +420,7 @@ pub fn compile_ws<'a>(
     }
 
     let unit_dependencies =
-        build_unit_dependencies(&bcx, &resolve, std_resolve.as_ref(), &units, &std_roots)?;
+        build_unit_dependencies(&bcx, &resolve, std_resolve.as_ref(), &units)?;
 
     let ret = {
         let _p = profile::start("compiling");

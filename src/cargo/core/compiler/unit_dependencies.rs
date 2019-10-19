@@ -15,14 +15,13 @@
 //! (for example, with and without tests), so we actually build a dependency
 //! graph of `Unit`s, which capture these properties.
 
-use crate::core::compiler::Unit;
-use crate::core::compiler::{BuildContext, CompileKind, CompileMode};
+use crate::core::compiler::{standard_lib, BuildContext, CompileKind, CompileMode, Unit};
 use crate::core::dependency::Kind as DepKind;
 use crate::core::package::Downloads;
 use crate::core::profiles::{Profile, UnitFor};
 use crate::core::resolver::Resolve;
 use crate::core::{InternedString, Package, PackageId, Target};
-use crate::CargoResult;
+use crate::util::errors::{CargoResult, CargoResultExt};
 use log::trace;
 use std::collections::{HashMap, HashSet};
 
@@ -50,8 +49,7 @@ struct State<'a, 'cfg> {
     downloads: Downloads<'a, 'cfg>,
     unit_dependencies: UnitGraph<'a>,
     package_cache: HashMap<PackageId, &'a Package>,
-    usr_resolve: &'a Resolve,
-    std_resolve: Option<&'a Resolve>,
+    resolve: &'a Resolve,
     /// This flag is `true` while generating the dependencies for the standard
     /// library.
     is_std: bool,
@@ -62,7 +60,6 @@ pub fn build_unit_dependencies<'a, 'cfg>(
     resolve: &'a Resolve,
     std_resolve: Option<&'a Resolve>,
     roots: &[Unit<'a>],
-    std_roots: &[Unit<'a>],
 ) -> CargoResult<UnitGraph<'a>> {
     let mut state = State {
         bcx,
@@ -70,19 +67,16 @@ pub fn build_unit_dependencies<'a, 'cfg>(
         waiting_on_download: HashSet::new(),
         unit_dependencies: HashMap::new(),
         package_cache: HashMap::new(),
-        usr_resolve: resolve,
-        std_resolve,
+        resolve,
         is_std: false,
     };
 
-    let std_unit_deps = calc_deps_of_std(&mut state, std_roots)?;
-
     deps_of_roots(roots, &mut state)?;
-    super::links::validate_links(state.resolve(), &state.unit_dependencies)?;
+    super::links::validate_links(state.resolve, &state.unit_dependencies)?;
     // Hopefully there aren't any links conflicts with the standard library?
 
-    if let Some(std_unit_deps) = std_unit_deps {
-        attach_std_deps(&mut state, std_roots, std_unit_deps);
+    if let Some(std_resolve) = std_resolve {
+        add_std(&mut state, std_resolve)?;
     }
 
     connect_run_custom_build_deps(&mut state.unit_dependencies);
@@ -99,44 +93,201 @@ pub fn build_unit_dependencies<'a, 'cfg>(
     Ok(state.unit_dependencies)
 }
 
-/// Compute all the dependencies for the standard library.
-fn calc_deps_of_std<'a, 'cfg>(
-    mut state: &mut State<'a, 'cfg>,
-    std_roots: &[Unit<'a>],
-) -> CargoResult<Option<UnitGraph<'a>>> {
-    if std_roots.is_empty() {
-        return Ok(None);
+/// Compute the set of std units to build, and attach them to
+/// `State.unit_dependencies`.
+fn add_std<'a, 'cfg>(state: &mut State<'a, 'cfg>, std_resolve: &'a Resolve) -> CargoResult<()> {
+    assert!(state.bcx.build_config.build_std);
+
+    // Determine the minimum set of std roots to build.
+    let config_roots = state
+        .bcx
+        .config
+        .build_config()?
+        .std
+        .as_ref()
+        .and_then(|std| std.roots.as_ref());
+    let std_deps = find_std_deps(
+        state.bcx,
+        &state.unit_dependencies,
+        config_roots,
+        std_resolve,
+    )?;
+    // Generate the root units.
+    let mut std_pkgs = Vec::new();
+    for pkg_id in std_deps {
+        let pkg = match state.get(pkg_id)? {
+            Some(pkg) => pkg,
+            // Not downloaded, was a remote dependency.
+            None => failure::bail!("std package `{}` not valid", pkg_id),
+        };
+        std_pkgs.push(pkg);
     }
-    // Compute dependencies for the standard library.
+    let std_roots = standard_lib::generate_std_roots(
+        state.bcx,
+        &std_pkgs,
+        std_resolve,
+        state.bcx.build_config.requested_kind,
+    )?;
+    // Stash the current graph, and build the std dep graph.
+    let unit_dependencies = std::mem::replace(&mut state.unit_dependencies, HashMap::new());
+    let usr_resolve = std::mem::replace(&mut state.resolve, std_resolve);
     state.is_std = true;
-    deps_of_roots(std_roots, &mut state)?;
+    let std_root_units: Vec<_> = std_roots.values().cloned().collect();
+    deps_of_roots(&std_root_units, state)?;
     state.is_std = false;
-    Ok(Some(std::mem::replace(
-        &mut state.unit_dependencies,
-        HashMap::new(),
-    )))
+    // Swap the user graph back in place, and attach these std roots to those units.
+    let std_graph = std::mem::replace(&mut state.unit_dependencies, unit_dependencies);
+    std::mem::replace(&mut state.resolve, usr_resolve);
+    attach_std_deps(state, std_roots, std_graph, config_roots);
+    Ok(())
+}
+
+/// Find which root std packages need to be built.
+fn find_std_deps<'a>(
+    bcx: &'a BuildContext<'a, '_>,
+    graph: &UnitGraph<'a>,
+    config_roots: Option<&Vec<InternedString>>,
+    std_resolve: &'a Resolve,
+) -> CargoResult<HashSet<PackageId>> {
+    let mut result = HashSet::new();
+
+    // Collect anything explicitly listed.
+    for unit in graph.keys() {
+        for dep in unit.pkg.dependencies() {
+            if dep.source_id().is_std() && bcx.dep_activated(unit, dep) {
+                let pkg_id = std_resolve.query(&dep.package_name()).chain_err(|| {
+                    failure::format_err!(
+                        "stdlib dependency `{}` not found, required by package `{}`",
+                        dep.package_name(),
+                        unit.pkg
+                    )
+                })?;
+                result.insert(pkg_id);
+            }
+        }
+    }
+    // Collect anything explicitly called for in the config.
+    match config_roots {
+        Some(roots) => {
+            for root in roots {
+                let pkg_id = std_resolve.query(root).chain_err(|| {
+                    failure::format_err!(
+                        "stdlib dependency `{}` not found, defined in config `build.std.roots`",
+                        root
+                    )
+                })?;
+                result.insert(pkg_id);
+            }
+        }
+        None => {
+            // When global roots are not configured, and at least 1 package
+            // does not have explicit deps, then include `std` by default.
+            let needs_default = graph.keys().any(|unit| {
+                !unit
+                    .pkg
+                    .dependencies()
+                    .iter()
+                    .any(|dep| dep.source_id().is_std())
+            });
+            if needs_default {
+                result.extend(
+                    standard_lib::default_deps()
+                        .into_iter()
+                        .map(|name| std_resolve.query(&name).expect("stdlib missing")),
+                );
+            }
+        }
+    }
+    // Add "test" if anything needs it.
+    let has_test = graph.keys().any(|unit| {
+        // Tests with their own harness don't need libtest.
+        unit.mode.is_rustc_test() && unit.target.harness()
+    });
+    // Only include implicit libtest if `std` is already included. This is a
+    // special case when using custom test frameworks with no_std.
+    let has_std = result.iter().any(|pkg_id| pkg_id.name().as_str() == "std");
+    if has_test && has_std {
+        result.insert(std_resolve.query("test").expect("test missing"));
+    }
+    // Always ensure compiler_builtins is included.
+    result.insert(
+        std_resolve
+            .query("compiler_builtins")
+            .expect("compiler_builtins missing"),
+    );
+    Ok(result)
 }
 
 /// Add the standard library units to the `unit_dependencies`.
 fn attach_std_deps<'a, 'cfg>(
     state: &mut State<'a, 'cfg>,
-    std_roots: &[Unit<'a>],
-    std_unit_deps: UnitGraph<'a>,
+    std_roots: HashMap<InternedString, Unit<'a>>,
+    std_graph: UnitGraph<'a>,
+    config_roots: Option<&Vec<InternedString>>,
 ) {
+    let bcx = state.bcx;
     // Attach the standard library as a dependency of every target unit.
     for (unit, deps) in state.unit_dependencies.iter_mut() {
-        if !unit.kind.is_host() && !unit.mode.is_run_custom_build() {
-            deps.extend(std_roots.iter().map(|unit| UnitDep {
-                unit: *unit,
-                unit_for: UnitFor::new_normal(),
-                extern_crate_name: unit.pkg.name(),
-                // TODO: Does this `public` make sense?
-                public: true,
-            }));
+        if unit.kind.is_host() || unit.mode.is_run_custom_build() {
+            continue;
         }
+        // Collect std deps.
+        let explicit_std_deps = unit
+            .pkg
+            .dependencies()
+            .iter()
+            .filter(|dep| dep.source_id().is_std() && bcx.dep_activated(unit, dep));
+        let mut std_units: Vec<Unit<'a>> = explicit_std_deps
+            .map(|dep| std_roots[&dep.package_name()])
+            .collect();
+        let has_explicit_std = unit
+            .pkg
+            .dependencies()
+            .iter()
+            .any(|dep| dep.source_id().is_std());
+        if !has_explicit_std {
+            // No explicit deps, use defaults.
+            match config_roots {
+                Some(roots) => {
+                    for root in roots {
+                        std_units.push(std_roots[root]);
+                    }
+                }
+                None => std_units.extend(
+                    standard_lib::default_deps()
+                        .into_iter()
+                        .map(|name| std_roots[&name]),
+                ),
+            }
+        }
+        // Add `test` if needed.
+        let test_str = InternedString::new("test");
+        if unit.mode.is_rustc_test()
+            // Don't include test if harness is disabled.
+            && unit.target.harness()
+            // Only include test if `std` is enabled (see find_std_deps).
+            && std_roots.contains_key(&test_str)
+            // Don't include it twice if it is explicitly listed.
+            && !std_units.iter().any(|unit| unit.pkg.name() == test_str)
+        {
+            std_units.push(std_roots[&test_str]);
+        }
+        // compiler_builtins must be built for every crate.
+        // Not sure if there is some way to remove this. Maybe add to
+        // libcore/Cargo.toml? But what about no_core crates?
+        std_units.push(std_roots[&InternedString::new("compiler_builtins")]);
+
+        // Add to the graph.
+        deps.extend(std_units.into_iter().map(|unit| UnitDep {
+            unit,
+            unit_for: UnitFor::new_normal(),
+            extern_crate_name: unit.pkg.name(),
+            // TODO: Does this `public` make sense?
+            public: true,
+        }));
     }
     // And also include the dependencies of the standard library itself.
-    for (unit, deps) in std_unit_deps.into_iter() {
+    for (unit, deps) in std_graph.into_iter() {
         if let Some(other_unit) = state.unit_dependencies.insert(unit, deps) {
             panic!("std unit collision with existing unit: {:?}", other_unit);
         }
@@ -209,8 +360,6 @@ fn deps_of<'a, 'cfg>(
 
 /// For a package, returns all targets that are registered as dependencies
 /// for that package.
-/// This returns a `Vec` of `(Unit, UnitFor)` pairs. The `UnitFor`
-/// is the profile type that should be used for dependencies of the unit.
 fn compute_deps<'a, 'cfg>(
     unit: &Unit<'a>,
     state: &mut State<'a, 'cfg>,
@@ -225,36 +374,9 @@ fn compute_deps<'a, 'cfg>(
 
     let bcx = state.bcx;
     let id = unit.pkg.package_id();
-    let deps = state.resolve().deps(id).filter(|&(_id, deps)| {
+    let deps = state.resolve.deps(id).filter(|&(_id, deps)| {
         assert!(!deps.is_empty());
-        deps.iter().any(|dep| {
-            // If this target is a build command, then we only want build
-            // dependencies, otherwise we want everything *other than* build
-            // dependencies.
-            if unit.target.is_custom_build() != dep.is_build() {
-                return false;
-            }
-
-            // If this dependency is **not** a transitive dependency, then it
-            // only applies to test/example targets.
-            if !dep.is_transitive()
-                && !unit.target.is_test()
-                && !unit.target.is_example()
-                && !unit.mode.is_any_test()
-            {
-                return false;
-            }
-
-            // If this dependency is only available for certain platforms,
-            // make sure we're only enabling it for that platform.
-            if !bcx.dep_platform_activated(dep, unit.kind) {
-                return false;
-            }
-
-            // If we've gotten past all that, then this dependency is
-            // actually used!
-            true
-        })
+        deps.iter().any(|dep| bcx.dep_activated(unit, dep))
     });
 
     let mut ret = Vec::new();
@@ -389,7 +511,7 @@ fn compute_deps_doc<'a, 'cfg>(
 ) -> CargoResult<Vec<UnitDep<'a>>> {
     let bcx = state.bcx;
     let deps = state
-        .resolve()
+        .resolve
         .deps(unit.pkg.package_id())
         .filter(|&(_id, deps)| {
             deps.iter().any(|dep| match dep.kind() {
@@ -559,15 +681,15 @@ fn new_unit_dep_with_profile<'a>(
     profile: Profile,
 ) -> CargoResult<UnitDep<'a>> {
     // TODO: consider making extern_crate_name return InternedString?
-    let extern_crate_name = InternedString::new(&state.resolve().extern_crate_name(
+    let extern_crate_name = InternedString::new(&state.resolve.extern_crate_name(
         parent.pkg.package_id(),
         pkg.package_id(),
         target,
     )?);
     let public = state
-        .resolve()
+        .resolve
         .is_public_dep(parent.pkg.package_id(), pkg.package_id());
-    let features = state.resolve().features_sorted(pkg.package_id());
+    let features = state.resolve.features_sorted(pkg.package_id());
     let unit = state
         .bcx
         .units
@@ -663,14 +785,6 @@ fn connect_run_custom_build_deps(unit_dependencies: &mut UnitGraph<'_>) {
 }
 
 impl<'a, 'cfg> State<'a, 'cfg> {
-    fn resolve(&self) -> &'a Resolve {
-        if self.is_std {
-            self.std_resolve.unwrap()
-        } else {
-            self.usr_resolve
-        }
-    }
-
     fn get(&mut self, id: PackageId) -> CargoResult<Option<&'a Package>> {
         if let Some(pkg) = self.package_cache.get(&id) {
             return Ok(Some(pkg));

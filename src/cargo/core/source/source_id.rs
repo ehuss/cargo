@@ -15,8 +15,9 @@ use url::Url;
 
 use crate::core::PackageId;
 use crate::ops;
-use crate::sources::DirectorySource;
-use crate::sources::{GitSource, PathSource, RegistrySource, CRATES_IO_INDEX};
+use crate::sources::{
+    DirectorySource, GitSource, PathSource, RegistrySource, StdlibSource, CRATES_IO_INDEX,
+};
 use crate::util::{CanonicalUrl, CargoResult, Config, IntoUrl};
 
 lazy_static::lazy_static! {
@@ -59,6 +60,8 @@ enum Kind {
     LocalRegistry,
     /// A directory-based registry.
     Directory,
+    /// A crate in the sysroot.
+    Stdlib,
 }
 
 /// Information to find a specific commit in a Git repository.
@@ -185,6 +188,12 @@ impl SourceId {
         SourceId::new(Kind::Directory, url)
     }
 
+    /// Creates a `SourceId` for a stdlib crate.
+    pub fn for_stdlib() -> CargoResult<SourceId> {
+        let url = Url::parse("stdlib:").unwrap();
+        SourceId::new(Kind::Stdlib, url)
+    }
+
     /// Returns the `SourceId` corresponding to the main repository.
     ///
     /// This is the main cargo registry by default, but it can be overridden in
@@ -283,6 +292,13 @@ impl SourceId {
         }
     }
 
+    pub fn is_std(self) -> bool {
+        match self.inner.kind {
+            Kind::Stdlib => true,
+            _ => false,
+        }
+    }
+
     /// Creates an implementation of `Source` corresponding to this ID.
     pub fn load<'a>(
         self,
@@ -323,6 +339,7 @@ impl SourceId {
                 };
                 Ok(Box::new(DirectorySource::new(&path, self, config)))
             }
+            Kind::Stdlib => Ok(Box::new(StdlibSource::new(self))),
         }
     }
 
@@ -454,6 +471,7 @@ impl fmt::Display for SourceId {
             Kind::Registry => write!(f, "registry `{}`", url_display(&self.inner.url)),
             Kind::LocalRegistry => write!(f, "registry `{}`", url_display(&self.inner.url)),
             Kind::Directory => write!(f, "dir {}", url_display(&self.inner.url)),
+            Kind::Stdlib => write!(f, "stdlib"),
         }
     }
 }
@@ -562,6 +580,9 @@ impl<'a> fmt::Display for SourceIdIntoUrl<'a> {
                 ref url,
                 ..
             } => write!(f, "directory+{}", url),
+            SourceIdInner {
+                kind: Kind::Stdlib, ..
+            } => write!(f, "stdlib:"),
         }
     }
 }

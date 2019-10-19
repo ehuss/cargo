@@ -1,0 +1,8 @@
+# This simulates a rustc_private crate, such as `hashbrown`.
+[package]
+name = "something-private"
+version = "0.1.0"
+edition = "2018"
+
+[lib]
+path = "lib.rs"

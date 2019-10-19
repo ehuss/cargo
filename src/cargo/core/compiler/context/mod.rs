@@ -211,15 +211,24 @@ impl<'a, 'cfg> Context<'a, 'cfg> {
                 // artifacts.
                 let mut doctest_deps = Vec::new();
                 for dep in self.unit_deps(unit) {
-                    if dep.unit.target.is_lib() && dep.unit.mode == CompileMode::Build {
+                    if dep.unit.target.is_lib()
+                        && dep.unit.mode == CompileMode::Build
+                        && !dep.unit.is_std
+                    {
                         let outputs = self.outputs(&dep.unit)?;
                         let outputs = outputs.iter().filter(|output| {
                             output.path.extension() == Some(OsStr::new("rlib"))
                                 || dep.unit.target.for_host()
                         });
                         for output in outputs {
-                            doctest_deps.push((dep.extern_crate_name, output.path.clone()));
+                            doctest_deps.push((dep.extern_crate_name, Some(output.path.clone())));
                         }
+                    }
+                }
+                // Explicit std dependencies are not recorded as units.
+                for dep in unit.pkg.dependencies() {
+                    if dep.source_id().is_std() && self.bcx.dep_activated(unit, dep) {
+                        doctest_deps.push((dep.package_name(), None));
                     }
                 }
                 // Help with tests to get a stable order with renamed deps.
@@ -228,6 +237,11 @@ impl<'a, 'cfg> Context<'a, 'cfg> {
                     package: unit.pkg.clone(),
                     target: unit.target.clone(),
                     deps: doctest_deps,
+                    sysroot: self
+                        .files()
+                        .layout(unit.kind)
+                        .sysroot()
+                        .map(|p| p.to_owned()),
                 });
             }
 

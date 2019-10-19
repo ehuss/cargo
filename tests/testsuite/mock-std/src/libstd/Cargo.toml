@@ -9,3 +9,6 @@ path = "lib.rs"
 
 [dependencies]
 registry-dep-using-alloc = { version = "*", features = ['mockbuild'] }
+panic_unwind = { path = "../libpanic_unwind" }
+# This is just a random dependency to exercise -Zforce-unstable-if-unmarked.
+something-private = { path = "../libprivate" }

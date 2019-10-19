@@ -17,8 +17,11 @@ pub struct Doctest {
     /// The target being tested (currently always the package's lib).
     pub target: Target,
     /// Extern dependencies needed by `rustdoc`. The path is the location of
-    /// the compiled lib.
-    pub deps: Vec<(InternedString, PathBuf)>,
+    /// the compiled lib. It is `None` if it should be a pathless `--extern`
+    /// for things like explicit standard library deps.
+    pub deps: Vec<(InternedString, Option<PathBuf>)>,
+    /// If set, then `--sysroot` flag should be passed.
+    pub sysroot: Option<PathBuf>,
 }
 
 /// A structure returning the result of a compilation.
@@ -211,7 +214,7 @@ impl<'cfg> Compilation<'cfg> {
             // libs from the sysroot that ships with rustc. This may not be
             // required (at least I cannot craft a situation where it
             // matters), but is here to be safe.
-            if self.config.cli_unstable().build_std.is_none() {
+            if self.config.cli_unstable().build_std {
                 search_path.push(self.target_dylib_path.clone());
             }
             search_path

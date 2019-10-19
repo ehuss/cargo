@@ -43,6 +43,8 @@ pub struct BuildConfig {
     /// An optional override of the rustc path for primary units only
     pub primary_unit_rustc: Option<ProcessBuilder>,
     pub rustfix_diagnostic_server: RefCell<Option<RustfixDiagnosticServer>>,
+    /// Whether or not the build-std mode is enabled.
+    pub build_std: bool,
 }
 
 impl BuildConfig {
@@ -89,6 +91,12 @@ impl BuildConfig {
         }
         let jobs = jobs.or(cfg.jobs).unwrap_or(::num_cpus::get() as u32);
 
+        // Change the default of `build.std.enabled` to `false` when removing
+        // the `-Z` flag. Defaulting to `true` just a convenience so you don't
+        // have to enable it in two places.
+        let build_std =
+            config.cli_unstable().build_std && cfg.std.as_ref().map_or(true, |s| s.enabled);
+
         Ok(BuildConfig {
             requested_kind,
             jobs,
@@ -99,6 +107,7 @@ impl BuildConfig {
             build_plan: false,
             primary_unit_rustc: None,
             rustfix_diagnostic_server: RefCell::new(None),
+            build_std,
         })
     }
 

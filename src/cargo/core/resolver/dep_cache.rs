@@ -219,6 +219,7 @@ impl<'a> RegistryQueryer<'a> {
         // which can satisfy that dependency.
         let mut deps = deps
             .into_iter()
+            .filter(|(dep, _features)| !dep.source_id().is_std())
             .map(|(dep, features)| {
                 let candidates = self.query(&dep)?;
                 Ok((dep, candidates, features))

@@ -134,6 +134,13 @@ pub fn exit_with_error(err: CliError, shell: &mut Shell) -> ! {
                  with --verbose."
             ));
         }
+
+        if cfg!(debug_assertions) && log::log_enabled!(log::Level::Warn) {
+            let bt = error.backtrace().to_string();
+            if !bt.is_empty() {
+                log::warn!("{}", bt);
+            }
+        }
     }
 
     std::process::exit(exit_code)

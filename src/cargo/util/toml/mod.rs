@@ -240,6 +240,7 @@ pub struct DetailedTomlDependency {
     default_features2: Option<bool>,
     package: Option<String>,
     public: Option<bool>,
+    stdlib: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1473,7 +1474,11 @@ impl DetailedTomlDependency {
         cx: &mut Context<'_, '_>,
         kind: Option<Kind>,
     ) -> CargoResult<Dependency> {
-        if self.version.is_none() && self.path.is_none() && self.git.is_none() {
+        if self.version.is_none()
+            && self.path.is_none()
+            && self.git.is_none()
+            && self.stdlib.is_none()
+        {
             let msg = format!(
                 "dependency ({}) specified without \
                  providing a local path, Git repository, or \
@@ -1514,23 +1519,69 @@ impl DetailedTomlDependency {
             }
         }
 
+        match self.stdlib {
+            Some(false) => bail!("`stdlib` cannot be `false` (dependency `{}`)", name_in_toml),
+            Some(true) => {
+                cx.features.require(Feature::explicit_std())?;
+                if self.features.is_some()
+                    || self.default_features.is_some()
+                    || self.default_features2.is_some()
+                {
+                    bail!(
+                        "`stdlib` currently does not support features (dependency `{}`)",
+                        name_in_toml
+                    );
+                }
+                if self.public.is_some() {
+                    bail!(
+                        "`stdlib` currently does not support public/private (dependency `{}`)",
+                        name_in_toml
+                    );
+                }
+                if self.package.is_some() {
+                    bail!(
+                        "`package` renaming for stdlib dependencies is currently not supported (dependency `{}`)",
+                        name_in_toml
+                    );
+                }
+            }
+            None => {}
+        }
+
         let new_source_id = match (
             self.git.as_ref(),
             self.path.as_ref(),
             self.registry.as_ref(),
             self.registry_index.as_ref(),
+            self.stdlib.as_ref(),
         ) {
-            (Some(_), _, Some(_), _) | (Some(_), _, _, Some(_)) => bail!(
+            (Some(_), _, _, _, Some(_)) => bail!(
+                "`stdlib` cannot be specified with `git` (dependency `{}`)",
+                name_in_toml
+            ),
+            (_, Some(_), _, _, Some(_)) => bail!(
+                "`stdlib` cannot be specified with `path` (dependency `{}`)",
+                name_in_toml
+            ),
+            (_, _, Some(_), _, Some(_)) | (_, _, _, Some(_), Some(_)) => bail!(
+                "`stdlib` cannot be specified with `registry` (dependency `{}`)",
+                name_in_toml
+            ),
+            (None, None, None, None, Some(false)) => {
+                bail!("`stdlib` cannot be `false` (dependency `{}`)", name_in_toml)
+            }
+            (None, None, None, None, Some(true)) => SourceId::for_stdlib()?,
+            (Some(_), _, Some(_), _, None) | (Some(_), _, _, Some(_), None) => bail!(
                 "dependency ({}) specification is ambiguous. \
                  Only one of `git` or `registry` is allowed.",
                 name_in_toml
             ),
-            (_, _, Some(_), Some(_)) => bail!(
+            (_, _, Some(_), Some(_), None) => bail!(
                 "dependency ({}) specification is ambiguous. \
                  Only one of `registry` or `registry-index` is allowed.",
                 name_in_toml
             ),
-            (Some(git), maybe_path, _, _) => {
+            (Some(git), maybe_path, _, _, None) => {
                 if maybe_path.is_some() {
                     let msg = format!(
                         "dependency ({}) specification is ambiguous. \
@@ -1566,7 +1617,7 @@ impl DetailedTomlDependency {
                 let loc = git.into_url()?;
                 SourceId::for_git(&loc, reference)?
             }
-            (None, Some(path), _, _) => {
+            (None, Some(path), _, _, None) => {
                 cx.nested_paths.push(PathBuf::from(path));
                 // If the source ID for the package we're parsing is a path
                 // source, then we normalize the path here to get rid of
@@ -1584,12 +1635,14 @@ impl DetailedTomlDependency {
                     cx.source_id
                 }
             }
-            (None, None, Some(registry), None) => SourceId::alt_registry(cx.config, registry)?,
-            (None, None, None, Some(registry_index)) => {
+            (None, None, Some(registry), None, None) => {
+                SourceId::alt_registry(cx.config, registry)?
+            }
+            (None, None, None, Some(registry_index), None) => {
                 let url = registry_index.into_url()?;
                 SourceId::for_registry(&url)?
             }
-            (None, None, None, None) => SourceId::crates_io(cx.config)?,
+            (None, None, None, None, None) => SourceId::crates_io(cx.config)?,
         };
 
         let (pkg_name, explicit_name_in_toml) = match self.package {

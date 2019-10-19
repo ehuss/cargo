@@ -4,37 +4,18 @@ use super::layout::Layout;
 use crate::core::compiler::{BuildContext, CompileKind, CompileMode, Context, FileFlavor, Unit};
 use crate::core::profiles::UnitFor;
 use crate::core::resolver::ResolveOpts;
-use crate::core::{Dependency, PackageId, PackageSet, Resolve, SourceId, Workspace};
-use crate::ops::{self, Packages};
+use crate::core::{
+    Dependency, InternedString, Package, PackageIdSpec, PackageSet, Resolve, SourceId, Workspace,
+};
+use crate::ops::{self};
 use crate::util::errors::CargoResult;
 use crate::util::paths;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 
-/// Parse the `-Zbuild-std` flag.
-pub fn parse_unstable_flag(value: Option<&str>) -> Vec<String> {
-    // This is a temporary hack until there is a more principled way to
-    // declare dependencies in Cargo.toml.
-    let value = value.unwrap_or("std");
-    let mut crates: HashSet<&str> = value.split(',').collect();
-    if crates.contains("std") {
-        crates.insert("core");
-        crates.insert("alloc");
-        crates.insert("proc_macro");
-        crates.insert("panic_unwind");
-        crates.insert("compiler_builtins");
-    } else if crates.contains("core") {
-        crates.insert("compiler_builtins");
-    }
-    crates.into_iter().map(|s| s.to_string()).collect()
-}
-
 /// Resolve the standard library dependencies.
-pub fn resolve_std<'cfg>(
-    ws: &Workspace<'cfg>,
-    crates: &[String],
-) -> CargoResult<(PackageSet<'cfg>, Resolve)> {
+pub fn resolve_std<'cfg>(ws: &Workspace<'cfg>) -> CargoResult<(PackageSet<'cfg>, Resolve)> {
     let src_path = detect_sysroot_src_path(ws)?;
     let to_patch = [
         "rustc-std-workspace-core",
@@ -90,12 +71,8 @@ pub fn resolve_std<'cfg>(
     // `[dev-dependencies]`. No need for us to generate a `Resolve` which has
     // those included because we'll never use them anyway.
     std_ws.set_require_optional_deps(false);
-    // `test` is not in the default set because it is optional, but it needs
-    // to be part of the resolve in case we do need it.
-    let mut spec_pkgs = Vec::from(crates);
-    spec_pkgs.push("test".to_string());
-    let spec = Packages::Packages(spec_pkgs);
-    let specs = spec.to_package_id_specs(&std_ws)?;
+    // `test` encompasses the entire standard library.
+    let specs = vec![PackageIdSpec::parse("test")?];
     let features = vec!["panic-unwind".to_string(), "backtrace".to_string()];
     // dev_deps setting shouldn't really matter here.
     let opts = ResolveOpts::new(
@@ -106,25 +83,19 @@ pub fn resolve_std<'cfg>(
     Ok((resolve.pkg_set, resolve.targeted_resolve))
 }
 
-/// Generate a list of root `Unit`s for the standard library.
+/// Generate a map of root `Unit`s for the standard library.
 ///
-/// The given slice of crate names is the root set.
+/// Essentially converts `std_pkgs` to a set of `Unit`s.
+///
+/// The key of the result is the package name.
 pub fn generate_std_roots<'a>(
     bcx: &BuildContext<'a, '_>,
-    crates: &[String],
+    std_pkgs: &[&'a Package],
     std_resolve: &'a Resolve,
     kind: CompileKind,
-) -> CargoResult<Vec<Unit<'a>>> {
-    // Generate the root Units for the standard library.
-    let std_ids = crates
-        .iter()
-        .map(|crate_name| std_resolve.query(crate_name))
-        .collect::<CargoResult<Vec<PackageId>>>()?;
-    // Convert PackageId to Package.
-    let std_pkgs = bcx.packages.get_many(std_ids)?;
-    // Generate a list of Units.
+) -> CargoResult<HashMap<InternedString, Unit<'a>>> {
     std_pkgs
-        .into_iter()
+        .iter()
         .map(|pkg| {
             let lib = pkg
                 .targets()
@@ -144,11 +115,14 @@ pub fn generate_std_roots<'a>(
                 bcx.build_config.profile_kind.clone(),
             );
             let features = std_resolve.features_sorted(pkg.package_id());
-            Ok(bcx.units.intern(
-                pkg, lib, profile, kind, mode, features, /*is_std*/ true,
+            Ok((
+                pkg.name(),
+                bcx.units.intern(
+                    pkg, lib, profile, kind, mode, features, /*is_std*/ true,
+                ),
             ))
         })
-        .collect::<CargoResult<Vec<_>>>()
+        .collect::<CargoResult<_>>()
 }
 
 fn detect_sysroot_src_path(ws: &Workspace<'_>) -> CargoResult<PathBuf> {
@@ -205,4 +179,16 @@ pub fn add_sysroot_artifact<'a>(
         paths::link_or_copy(path, dst)?;
     }
     Ok(())
+}
+
+/// The default set of packages to depend on when no explicit dependencies are
+/// listed, and `build.std.roots` is not specified.
+///
+/// `test` is conditionally included only for tests based on some logic in
+/// `unit_dependencies`.
+pub fn default_deps() -> Vec<InternedString> {
+    vec![
+        InternedString::new("std"),
+        InternedString::new("proc_macro"),
+    ]
 }

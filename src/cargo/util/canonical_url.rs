@@ -19,15 +19,6 @@ impl CanonicalUrl {
     pub fn new(url: &Url) -> CargoResult<CanonicalUrl> {
         let mut url = url.clone();
 
-        // cannot-be-a-base-urls (e.g., `github.com:rust-lang-nursery/rustfmt.git`)
-        // are not supported.
-        if url.cannot_be_a_base() {
-            failure::bail!(
-                "invalid url `{}`: cannot-be-a-base-URLs are not supported",
-                url
-            )
-        }
-
         // Strip a trailing slash.
         if url.path().ends_with('/') {
             url.path_segments_mut().unwrap().pop_if_empty();
@@ -47,11 +38,13 @@ impl CanonicalUrl {
         // Repos can generally be accessed with or without `.git` extension.
         let needs_chopping = url.path().ends_with(".git");
         if needs_chopping {
-            let last = {
-                let last = url.path_segments().unwrap().next_back().unwrap();
-                last[..last.len() - 4].to_owned()
-            };
-            url.path_segments_mut().unwrap().pop().push(&last);
+            if let Some(mut segments) = url.path_segments() {
+                let last = {
+                    let last = segments.next_back().unwrap();
+                    last[..last.len() - 4].to_owned()
+                };
+                url.path_segments_mut().unwrap().pop().push(&last);
+            }
         }
 
         Ok(CanonicalUrl(url))

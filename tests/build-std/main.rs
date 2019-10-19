@@ -22,36 +22,19 @@ use cargo_test_support::*;
 use std::env;
 use std::path::Path;
 
-fn enable_build_std(e: &mut Execs, arg: Option<&str>) {
-    e.env_remove("CARGO_HOME");
-    e.env_remove("HOME");
-    e.arg("-Zno-index-update");
-
-    // And finally actually enable `build-std` for now
-    let arg = match arg {
-        Some(s) => format!("-Zbuild-std={}", s),
-        None => "-Zbuild-std".to_string(),
-    };
-    e.arg(arg);
-    e.masquerade_as_nightly_cargo();
-}
-
 // Helper methods used in the tests below
 trait BuildStd: Sized {
     fn build_std(&mut self) -> &mut Self;
-    fn build_std_arg(&mut self, arg: &str) -> &mut Self;
     fn target_host(&mut self) -> &mut Self;
 }
 
 impl BuildStd for Execs {
     fn build_std(&mut self) -> &mut Self {
-        enable_build_std(self, None);
-        self
-    }
-
-    fn build_std_arg(&mut self, arg: &str) -> &mut Self {
-        enable_build_std(self, Some(arg));
-        self
+        self.env_remove("CARGO_HOME")
+            .env_remove("HOME")
+            .arg("-Zno-index-update")
+            .arg("-Zbuild-std")
+            .masquerade_as_nightly_cargo()
     }
 
     fn target_host(&mut self) -> &mut Self {
@@ -114,6 +97,18 @@ fn basic() {
 #[cargo_test(build_std)]
 fn cross_custom() {
     let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                core = { stdlib = true }
+            "#,
+        )
         .file("src/lib.rs", "#![no_std] pub fn f() {}")
         .file(
             "custom-target.json",
@@ -133,13 +128,25 @@ fn cross_custom() {
         .build();
 
     p.cargo("build --target custom-target.json -v")
-        .build_std_arg("core")
+        .build_std()
         .run();
 }
 
 #[cargo_test(build_std)]
 fn custom_test_framework() {
     let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                core = { stdlib = true }
+            "#,
+        )
         .file(
             "src/lib.rs",
             r#"
@@ -191,6 +198,6 @@ fn custom_test_framework() {
 
     p.cargo("test --target target.json --no-run -v")
         .env("PATH", new_path)
-        .build_std_arg("core")
+        .build_std()
         .run();
 }

@@ -114,6 +114,47 @@ impl<'a, 'cfg> BuildContext<'a, 'cfg> {
         platform.matches(name, self.cfg(kind))
     }
 
+    /// DOCME
+    pub fn dep_activated(&self, unit: &Unit<'_>, dep: &Dependency) -> bool {
+        // If this target is a build command, then we only want build
+        // dependencies, otherwise we want everything *other than* build
+        // dependencies.
+        if unit.target.is_custom_build() != dep.is_build() {
+            return false;
+        }
+
+        // If this dependency is **not** a transitive dependency, then it
+        // only applies to test/example targets.
+        if !dep.is_transitive()
+            && !unit.target.is_test()
+            && !unit.target.is_example()
+            && !unit.mode.is_any_test()
+        {
+            return false;
+        }
+
+        // If this dependency is only available for certain platforms,
+        // make sure we're only enabling it for that platform.
+        if !self.dep_platform_activated(dep, unit.kind) {
+            return false;
+        }
+
+        // Check if an optional dependency is enabled. This is currently only
+        // checked for stdlib dependencies, as this is normally handled in the
+        // resolver.
+        if dep.is_optional()
+            && dep.source_id().is_std()
+            && !unit
+                .features
+                .iter()
+                .any(|&feature| feature == dep.name_in_toml().as_str())
+        {
+            return false;
+        }
+
+        true
+    }
+
     /// Gets the user-specified linker for a particular host or target.
     pub fn linker(&self, kind: CompileKind) -> Option<&Path> {
         self.target_config(kind).linker.as_ref().map(|s| s.as_ref())

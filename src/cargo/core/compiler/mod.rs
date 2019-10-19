@@ -922,9 +922,7 @@ fn build_deps_args<'a, 'cfg>(
     let mut unstable_opts = false;
 
     if let Some(sysroot) = cx.files().layout(unit.kind).sysroot() {
-        if !unit.kind.is_host() {
-            cmd.arg("--sysroot").arg(sysroot);
-        }
+        cmd.arg("--sysroot").arg(sysroot);
     }
 
     for dep in deps {
@@ -937,6 +935,17 @@ fn build_deps_args<'a, 'cfg>(
         }
         if dep.unit.target.linkable() && !dep.unit.mode.is_doc() {
             link_to(cmd, cx, unit, &dep, &mut unstable_opts)?;
+        }
+    }
+
+    for dep in unit.pkg.dependencies() {
+        if dep.source_id().is_std() && bcx.dep_activated(unit, dep) {
+            // Ensure this is added to the extern prelude.
+            // TODO: does it make sense to honor --extern-private?
+            // TODO: support renaming (--extern doesn't support it yet)
+            // TODO: support optional
+            cmd.arg("--extern").arg(dep.package_name());
+            unstable_opts = true;
         }
     }
 

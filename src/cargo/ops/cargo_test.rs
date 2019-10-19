@@ -156,8 +156,10 @@ fn run_doc_tests(
             package,
             target,
             deps,
+            sysroot,
         } = doctest_info;
         config.shell().status("Doc-tests", target.name())?;
+        let mut unstable_opts = false;
         let mut p = compilation.rustdoc_process(package, target)?;
         p.arg("--test")
             .arg(target.src_path().path().unwrap())
@@ -166,7 +168,7 @@ fn run_doc_tests(
 
         if doctest_xcompile {
             p.arg("--target").arg(&compilation.target);
-            p.arg("-Zunstable-options");
+            unstable_opts = true;
             p.arg("--enable-per-target-ignores");
         }
 
@@ -205,9 +207,24 @@ fn run_doc_tests(
 
         for &(ref extern_crate_name, ref lib) in deps.iter() {
             let mut arg = OsString::from(extern_crate_name.as_str());
-            arg.push("=");
-            arg.push(lib);
+            if let Some(path) = lib {
+                arg.push("=");
+                arg.push(path);
+            } else {
+                // TODO: There is a bug in rustdoc where it is not properly
+                // passing `-Zunstable-options` to individual tests. This
+                // won't be necessary if pathless extern is stabilized.
+                panic!("pathless extern not yet supported in rustdoc");
+                // unstable_opts = true;
+            }
             p.arg("--extern").arg(&arg);
+        }
+
+        if let Some(sysroot) = sysroot {
+            p.arg("--sysroot").arg(sysroot);
+        }
+        if unstable_opts {
+            p.arg("-Zunstable-options");
         }
 
         if let Some(flags) = compilation.rustdocflags.get(&package.package_id()) {

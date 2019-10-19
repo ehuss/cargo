@@ -177,18 +177,19 @@ impl Layout {
         let dest = dest.into_path_unlocked();
 
         // Compute the sysroot path for the build-std feature.
-        let build_std = ws.config().cli_unstable().build_std.as_ref();
-        let (sysroot, sysroot_libdir) = if let Some(target) = build_std.and(target) {
-            // This uses a leading dot to avoid collision with named profiles.
-            let sysroot = dest.join(".sysroot");
-            let sysroot_libdir = sysroot
-                .join("lib")
-                .join("rustlib")
-                .join(target.short_name())
-                .join("lib");
-            (Some(sysroot), Some(sysroot_libdir))
-        } else {
-            (None, None)
+        let build_std = ws.config().cli_unstable().build_std;
+        let (sysroot, sysroot_libdir) = match (build_std, target) {
+            (true, Some(target)) => {
+                // This uses a leading dot to avoid collision with named profiles.
+                let sysroot = dest.join(".sysroot");
+                let sysroot_libdir = sysroot
+                    .join("lib")
+                    .join("rustlib")
+                    .join(target.short_name())
+                    .join("lib");
+                (Some(sysroot), Some(sysroot_libdir))
+            }
+            _ => (None, None),
         };
 
         Ok(Layout {

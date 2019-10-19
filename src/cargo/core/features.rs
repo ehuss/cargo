@@ -206,6 +206,9 @@ features! {
 
         // Allow to specify profiles other than 'dev', 'release', 'test', etc.
         [unstable] named_profiles: bool,
+
+        // Explicit dependencies on the standard library.
+        [unstable] explicit_std: bool,
     }
 }
 
@@ -337,7 +340,7 @@ pub struct CliUnstable {
     pub install_upgrade: bool,
     pub named_profiles: bool,
     pub binary_dep_depinfo: bool,
-    pub build_std: Option<Vec<String>>,
+    pub build_std: bool,
     pub timings: Option<Vec<String>>,
     pub doctest_xcompile: bool,
     pub panic_abort_tests: bool,
@@ -403,9 +406,7 @@ impl CliUnstable {
             "install-upgrade" => self.install_upgrade = parse_empty(k, v)?,
             "named-profiles" => self.named_profiles = parse_empty(k, v)?,
             "binary-dep-depinfo" => self.binary_dep_depinfo = parse_empty(k, v)?,
-            "build-std" => {
-                self.build_std = Some(crate::core::compiler::standard_lib::parse_unstable_flag(v))
-            }
+            "build-std" => self.build_std = parse_empty(k, v)?,
             "timings" => self.timings = Some(parse_timings(v)),
             "doctest-xcompile" => self.doctest_xcompile = parse_empty(k, v)?,
             "panic-abort-tests" => self.panic_abort_tests = parse_empty(k, v)?,

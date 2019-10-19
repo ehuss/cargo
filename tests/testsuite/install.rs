@@ -1130,15 +1130,6 @@ and will continue to do so, but this behavior will be removed eventually
 }
 
 #[cargo_test]
-fn test_install_git_cannot_be_a_base_url() {
-    cargo_process("install --git github.com:rust-lang-nursery/rustfmt.git")
-        .with_status(101)
-        .with_stderr("\
-[ERROR] invalid url `github.com:rust-lang-nursery/rustfmt.git`: cannot-be-a-base-URLs are not supported")
-        .run();
-}
-
-#[cargo_test]
 fn uninstall_multiple_and_specifying_bin() {
     cargo_process("uninstall foo bar --bin baz")
         .with_status(101)

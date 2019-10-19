@@ -39,6 +39,7 @@ mod dep_info;
 mod directory;
 mod doc;
 mod edition;
+mod explicit_std;
 mod features;
 mod fetch;
 mod fix;

@@ -19,9 +19,10 @@ use serde::Deserialize;
 use url::Url;
 
 use self::ConfigValue as CV;
+use crate::core::nightly_features_allowed;
 use crate::core::profiles::ConfigProfiles;
 use crate::core::shell::Verbosity;
-use crate::core::{nightly_features_allowed, CliUnstable, Shell, SourceId, Workspace};
+use crate::core::{CliUnstable, InternedString, Shell, SourceId, Workspace};
 use crate::ops;
 use crate::util::errors::{self, internal, CargoResult, CargoResultExt};
 use crate::util::toml as cargo_toml;
@@ -1473,6 +1474,13 @@ pub struct CargoBuildConfig {
     pub jobs: Option<u32>,
     pub rustflags: Option<StringList>,
     pub rustdocflags: Option<StringList>,
+    pub std: Option<StdConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StdConfig {
+    pub enabled: bool,
+    pub roots: Option<Vec<InternedString>>,
 }
 
 /// A type to deserialize a list of strings from a toml file.
