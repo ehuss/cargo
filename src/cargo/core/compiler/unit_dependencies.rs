@@ -99,19 +99,7 @@ fn add_std<'a, 'cfg>(state: &mut State<'a, 'cfg>, std_resolve: &'a Resolve) -> C
     assert!(state.bcx.build_config.build_std);
 
     // Determine the minimum set of std roots to build.
-    let config_roots = state
-        .bcx
-        .config
-        .build_config()?
-        .std
-        .as_ref()
-        .and_then(|std| std.roots.as_ref());
-    let std_deps = find_std_deps(
-        state.bcx,
-        &state.unit_dependencies,
-        config_roots,
-        std_resolve,
-    )?;
+    let std_deps = find_std_deps(state.bcx, &state.unit_dependencies, std_resolve)?;
     // Generate the root units.
     let mut std_pkgs = Vec::new();
     for pkg_id in std_deps {
@@ -138,7 +126,7 @@ fn add_std<'a, 'cfg>(state: &mut State<'a, 'cfg>, std_resolve: &'a Resolve) -> C
     // Swap the user graph back in place, and attach these std roots to those units.
     let std_graph = std::mem::replace(&mut state.unit_dependencies, unit_dependencies);
     std::mem::replace(&mut state.resolve, usr_resolve);
-    attach_std_deps(state, std_roots, std_graph, config_roots);
+    attach_std_deps(state, std_roots, std_graph);
     Ok(())
 }
 
@@ -146,7 +134,6 @@ fn add_std<'a, 'cfg>(state: &mut State<'a, 'cfg>, std_resolve: &'a Resolve) -> C
 fn find_std_deps<'a>(
     bcx: &'a BuildContext<'a, '_>,
     graph: &UnitGraph<'a>,
-    config_roots: Option<&Vec<InternedString>>,
     std_resolve: &'a Resolve,
 ) -> CargoResult<HashSet<PackageId>> {
     let mut result = HashSet::new();
@@ -166,37 +153,13 @@ fn find_std_deps<'a>(
             }
         }
     }
-    // Collect anything explicitly called for in the config.
-    match config_roots {
-        Some(roots) => {
-            for root in roots {
-                let pkg_id = std_resolve.query(root).chain_err(|| {
-                    failure::format_err!(
-                        "stdlib dependency `{}` not found, defined in config `build.std.roots`",
-                        root
-                    )
-                })?;
-                result.insert(pkg_id);
-            }
-        }
-        None => {
-            // When global roots are not configured, and at least 1 package
-            // does not have explicit deps, then include `std` by default.
-            let needs_default = graph.keys().any(|unit| {
-                !unit
-                    .pkg
-                    .dependencies()
-                    .iter()
-                    .any(|dep| dep.source_id().is_std())
-            });
-            if needs_default {
-                result.extend(
-                    standard_lib::default_deps()
-                        .into_iter()
-                        .map(|name| std_resolve.query(&name).expect("stdlib missing")),
-                );
-            }
-        }
+    // If no packages had anything explicit, use the default set.
+    if result.len() == 0 {
+        result.extend(
+            standard_lib::default_deps()
+                .into_iter()
+                .map(|name| std_resolve.query(&name).expect("stdlib missing")),
+        );
     }
     // Add "test" if anything needs it.
     let has_test = graph.keys().any(|unit| {
@@ -223,7 +186,6 @@ fn attach_std_deps<'a, 'cfg>(
     state: &mut State<'a, 'cfg>,
     std_roots: HashMap<InternedString, Unit<'a>>,
     std_graph: UnitGraph<'a>,
-    config_roots: Option<&Vec<InternedString>>,
 ) {
     let bcx = state.bcx;
     // Attach the standard library as a dependency of every target unit.
@@ -246,19 +208,8 @@ fn attach_std_deps<'a, 'cfg>(
             .iter()
             .any(|dep| dep.source_id().is_std());
         if !has_explicit_std {
-            // No explicit deps, use defaults.
-            match config_roots {
-                Some(roots) => {
-                    for root in roots {
-                        std_units.push(std_roots[root]);
-                    }
-                }
-                None => std_units.extend(
-                    standard_lib::default_deps()
-                        .into_iter()
-                        .map(|name| std_roots[&name]),
-                ),
-            }
+            // No explicit deps, use the union of all explicit deps.
+            std_units.extend(std_roots.values());
         }
         // Add `test` if needed.
         let test_str = InternedString::new("test");

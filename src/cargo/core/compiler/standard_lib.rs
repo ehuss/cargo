@@ -187,8 +187,10 @@ pub fn add_sysroot_artifact<'a>(
 /// `test` is conditionally included only for tests based on some logic in
 /// `unit_dependencies`.
 pub fn default_deps() -> Vec<InternedString> {
+    // TODO: remove me once proc-macro is set up.
     vec![
         InternedString::new("std"),
+        // TODO: This can be removed when proc-macro=true makes it implicit.
         InternedString::new("proc_macro"),
     ]
 }

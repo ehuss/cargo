@@ -419,8 +419,7 @@ pub fn compile_ws<'a>(
         }
     }
 
-    let unit_dependencies =
-        build_unit_dependencies(&bcx, &resolve, std_resolve.as_ref(), &units)?;
+    let unit_dependencies = build_unit_dependencies(&bcx, &resolve, std_resolve.as_ref(), &units)?;
 
     let ret = {
         let _p = profile::start("compiling");

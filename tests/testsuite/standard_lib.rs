@@ -586,9 +586,8 @@ fn macro_expanded_shadow() {
 }
 
 #[cargo_test]
-fn config_roots() {
-    // no_std with a dependency with no explicit stdlib dependencies, use the
-    // build.std.roots value instead. Make sure libstd is not built.
+fn no_explicit_default_in_dep() {
+    // no_std with a dependency with no explicit stdlib dependencies, does not build std.
     let setup = match setup() {
         Some(s) => s,
         None => return,
@@ -606,21 +605,15 @@ fn config_roots() {
         .file(
             "Cargo.toml",
             r#"
+                cargo-features = ["explicit-std"]
                 [package]
                 name = "foo"
                 version = "0.1.0"
                 edition = "2018"
 
                 [dependencies]
+                core = { stdlib = true }
                 implicit_dep = "0.1"
-            "#,
-        )
-        .file(
-            ".cargo/config",
-            r#"
-                [build.std]
-                enabled = true
-                roots = ["core"]
             "#,
         )
         .file(
@@ -636,6 +629,21 @@ fn config_roots() {
         .build_std(&setup)
         .target_host()
         .with_stderr_does_not_contain("[..]libstd[..]")
+        .run();
+
+    // Can't access std at all.
+    Package::new("implicit_dep", "0.1.1")
+        .file("src/lib.rs", "pub fn f() { std::custom_api(); }")
+        .publish();
+
+    std::fs::remove_file(p.root().join("Cargo.lock")).unwrap();
+
+    p.cargo("build -v --lib")
+        .build_std(&setup)
+        .target_host()
+        // std not found
+        .with_stderr_contains("error[E0463][..]")
+        .with_status(101)
         .run();
 }
 
@@ -658,35 +666,6 @@ fn gated_config() {
 [COMPILING] foo [..]
 [RUNNING] `rustc --crate-name foo src/lib.rs [..]
 [FINISHED] [..]
-",
-        )
-        .run();
-}
-
-#[cargo_test]
-fn roots_invalid() {
-    // Attempt a default root that doesn't exist.
-    let p = project()
-        .file("src/lib.rs", "")
-        .file(
-            ".cargo/config",
-            r#"
-                [build.std]
-                enabled = true
-                roots = ["pumpernickel"]
-            "#,
-        )
-        .build();
-    p.cargo("build")
-        .target_host()
-        .build_std_error()
-        .with_status(101)
-        .with_stderr_contains(
-            "\
-[ERROR] stdlib dependency `pumpernickel` not found, defined in config `build.std.roots`
-
-Caused by:
-  package ID specification `pumpernickel` matched no packages
 ",
         )
         .run();
