@@ -169,7 +169,7 @@ fn find_std_deps<'a>(
         });
         // Only include implicit libtest if `std` is already included. This is a
         // special case when using custom test frameworks with no_std.
-        let has_std = result.iter().any(|pkg_id| pkg_id.name().as_str() == "std");
+        let has_std = result.iter().any(|pkg_id| pkg_id.name() == "std");
         if has_test && has_std {
             result.insert(std_resolve.query("test").expect("test missing"));
         }
@@ -263,7 +263,7 @@ fn attach_std_deps<'a, 'cfg>(
         for name in required {
             if !deps
                 .iter()
-                .any(|unit_dep| unit_dep.unit.pkg.name().as_str() == *name)
+                .any(|unit_dep| unit_dep.unit.pkg.name() == *name)
             {
                 let req_unit = std_roots[&InternedString::new(name)];
                 deps.push(UnitDep {

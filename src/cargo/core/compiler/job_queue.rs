@@ -425,7 +425,7 @@ impl<'a, 'cfg> JobQueue<'a, 'cfg> {
         // profiles used. However, to keep it simple and compatible with old
         // behavior, we just display what the base profile is.
         let profile = cx.bcx.profiles.base_profile(&self.profile_kind)?;
-        let mut opt_type = String::from(if profile.opt_level.as_str() == "0" {
+        let mut opt_type = String::from(if profile.opt_level == "0" {
             "unoptimized"
         } else {
             "optimized"

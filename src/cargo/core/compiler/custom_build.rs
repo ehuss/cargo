@@ -564,7 +564,7 @@ fn prepare_metabuild<'a, 'cfg>(
         .filter_map(|name| {
             available_deps
                 .iter()
-                .find(|u| u.pkg.name().as_str() == name.as_str())
+                .find(|u| u.pkg.name() == name.as_str())
                 .map(|dep| dep.target.crate_name())
         })
         .collect();

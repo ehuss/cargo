@@ -385,6 +385,11 @@ fn explicit_optional() {
 
 #[cargo_test]
 fn explicit_rename() {
+    // Test renaming explicit std dependencies.
+    if !is_nightly() {
+        // Pathless --extern is unstable.
+        return;
+    }
     let p = project()
         .file(
             "Cargo.toml",
@@ -427,4 +432,41 @@ fn explicit_rename() {
         .build();
 
     p.cargo("test").masquerade_as_nightly_cargo().run();
+}
+
+#[cargo_test]
+fn implicit_proc_macro() {
+    // proc-macro is implicitly in scope if `proc-macro=true`
+    if !is_nightly() {
+        // Pathless --extern is unstable.
+        return;
+    }
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2018"
+
+                [lib]
+                proc-macro = true
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            r#"
+                use proc_macro::TokenStream;
+                #[proc_macro]
+                pub fn mymacro(input: TokenStream) -> TokenStream {
+                    "".parse().unwrap()
+                }
+            "#,
+        )
+        .build();
+
+    p.cargo("build").masquerade_as_nightly_cargo().run();
 }

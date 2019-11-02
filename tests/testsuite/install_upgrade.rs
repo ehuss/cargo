@@ -88,7 +88,7 @@ fn validate_trackers(name: &str, version: &str, bins: &[&str]) {
             .iter()
             .map(|b| b.as_str().unwrap().to_string())
             .collect();
-        if pkg_id.name().as_str() == name && pkg_id.version().to_string() == version {
+        if pkg_id.name() == name && pkg_id.version().to_string() == version {
             if bins.is_empty() {
                 panic!(
                     "Expected {} to not be installed, but found: {:?}",

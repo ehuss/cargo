@@ -1041,6 +1041,20 @@ pub fn extern_args<'a>(
         // sysroot via `extern crate` items.
     }
 
+    if unit.target.proc_macro()
+        && unit
+            .pkg
+            .manifest()
+            .features()
+            .require(Feature::explicit_std())
+            .is_ok()
+        && !deps.iter().any(|dep| dep.unit.pkg.name() == "proc_macro")
+    {
+        result.push(OsString::from("--extern"));
+        result.push(OsString::from("proc_macro"));
+        *unstable_opts = true;
+    }
+
     Ok(result)
 }
 
