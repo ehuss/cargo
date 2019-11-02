@@ -100,20 +100,33 @@ fn explicit_test() {
             ",
         )
         .build();
-    // TODO: remove --lib when doc tests are supported
-    p.cargo("test --lib").masquerade_as_nightly_cargo().run();
+    p.cargo("test").masquerade_as_nightly_cargo().run();
 }
 
 #[cargo_test]
 fn explicit_incompatible() {
     // Some settings are currently not supported.
     let expected = &[
-        ("stdlib=false", "`stdlib` cannot be `false` (dependency `std`)"),
-        ("stdlib=true, features=[\"panic-unwind\"]", "`stdlib` currently does not support features (dependency `std`)"),
-        ("stdlib=true, default-features=false", "`stdlib` currently does not support features (dependency `std`)"),
-        ("stdlib=true, default_features=true", "`stdlib` currently does not support features (dependency `std`)"),
-        ("stdlib=true, public=true", "`stdlib` currently does not support public/private (dependency `std`)"),
-        ("stdlib=true, package=\"std\"", "`package` renaming for stdlib dependencies is currently not supported (dependency `std`)"),
+        (
+            "stdlib=false",
+            "`stdlib` cannot be `false` (dependency `std`)",
+        ),
+        (
+            "stdlib=true, features=[\"panic-unwind\"]",
+            "`stdlib` currently does not support features (dependency `std`)",
+        ),
+        (
+            "stdlib=true, default-features=false",
+            "`stdlib` currently does not support features (dependency `std`)",
+        ),
+        (
+            "stdlib=true, default_features=true",
+            "`stdlib` currently does not support features (dependency `std`)",
+        ),
+        (
+            "stdlib=true, public=true",
+            "`stdlib` currently does not support public/private (dependency `std`)",
+        ),
     ];
 
     for (dep, err_msg) in expected {
@@ -186,12 +199,7 @@ fn doc_explicit() {
         )
         .build();
 
-    // TODO: Disabled until pathless extern is stabilized or rustdoc bug is fixed.
-    // https://github.com/rust-lang/rust/pull/65314
-    // p.cargo("test --doc")
-    //     .masquerade_as_nightly_cargo()
-    //     .run();
-
+    p.cargo("test --doc").masquerade_as_nightly_cargo().run();
     p.cargo("doc").masquerade_as_nightly_cargo().run();
 }
 
@@ -373,4 +381,50 @@ fn explicit_optional() {
     p.cargo("build --features=alloc,dep/alloc")
         .masquerade_as_nightly_cargo()
         .run();
+}
+
+#[cargo_test]
+fn explicit_rename() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                corealias = {stdlib=true, package="core"}
+                stdalias = {stdlib=true, package="std"}
+                allocalias = {stdlib=true, package="alloc"}
+
+                [dev-dependencies]
+                testalias = {stdlib=true, package="test"}
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            r#"
+                #![cfg_attr(test, feature(test))]
+
+                /// ```
+                /// assert_eq!(corealias::u8::MIN, 0);
+                /// ```
+                pub fn f() {
+                    assert_eq!(corealias::u8::MIN, 0);
+                    let _ = stdalias::string::String::new();
+                    let _ = allocalias::string::String::new();
+                }
+
+                #[cfg(test)]
+                #[bench]
+                fn b1(b: &mut testalias::Bencher) {
+                    b.iter(|| ())
+                }
+            "#,
+        )
+        .build();
+
+    p.cargo("test").masquerade_as_nightly_cargo().run();
 }

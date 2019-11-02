@@ -1538,12 +1538,6 @@ impl DetailedTomlDependency {
                         name_in_toml
                     );
                 }
-                if self.package.is_some() {
-                    bail!(
-                        "`package` renaming for stdlib dependencies is currently not supported (dependency `{}`)",
-                        name_in_toml
-                    );
-                }
             }
             None => {}
         }

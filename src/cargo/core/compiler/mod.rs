@@ -43,8 +43,7 @@ use self::unit_dependencies::UnitDep;
 pub use crate::core::compiler::unit::{Unit, UnitInterner};
 use crate::core::manifest::TargetSourcePath;
 use crate::core::profiles::{Lto, PanicStrategy, Profile};
-use crate::core::Feature;
-use crate::core::{PackageId, Target};
+use crate::core::{Feature, InternedString, PackageId, Target};
 use crate::util::errors::{self, CargoResult, CargoResultExt, Internal, ProcessError};
 use crate::util::machine_message::Message;
 use crate::util::paths;
@@ -893,8 +892,7 @@ fn build_deps_args<'a, 'cfg>(
         });
     }
 
-    // Create Vec since mutable cx is needed in closure below.
-    let deps = Vec::from(cx.unit_deps(unit));
+    let deps = cx.unit_deps(unit);
 
     // If there is not one linkable target but should, rustc fails later
     // on if there is an `extern crate` for it. This may turn into a hard
@@ -921,32 +919,14 @@ fn build_deps_args<'a, 'cfg>(
 
     let mut unstable_opts = false;
 
-    if let Some(sysroot) = cx.files().layout(unit.kind).sysroot() {
-        cmd.arg("--sysroot").arg(sysroot);
-    }
-
     for dep in deps {
-        if !unit.is_std && dep.unit.is_std {
-            // Dependency to sysroot crate uses --sysroot.
-            continue;
-        }
         if dep.unit.mode.is_run_custom_build() {
             cmd.env("OUT_DIR", &cx.files().build_script_out_dir(&dep.unit));
         }
-        if dep.unit.target.linkable() && !dep.unit.mode.is_doc() {
-            link_to(cmd, cx, unit, &dep, &mut unstable_opts)?;
-        }
     }
 
-    for dep in unit.pkg.dependencies() {
-        if dep.source_id().is_std() && bcx.dep_activated(unit, dep) {
-            // Ensure this is added to the extern prelude.
-            // TODO: does it make sense to honor --extern-private?
-            // TODO: support renaming (--extern doesn't support it yet)
-            // TODO: support optional
-            cmd.arg("--extern").arg(dep.package_name());
-            unstable_opts = true;
-        }
+    for arg in extern_args(cx, unit, &mut unstable_opts)? {
+        cmd.arg(arg);
     }
 
     // This will only be set if we're already using a feature
@@ -956,37 +936,51 @@ fn build_deps_args<'a, 'cfg>(
     }
 
     return Ok(());
+}
 
-    fn link_to<'a, 'cfg>(
-        cmd: &mut ProcessBuilder,
-        cx: &mut Context<'a, 'cfg>,
-        current: &Unit<'a>,
-        dep: &UnitDep<'a>,
-        need_unstable_opts: &mut bool,
-    ) -> CargoResult<()> {
+/// Generates a list of `--extern` arguments.
+pub fn extern_args<'a>(
+    cx: &Context<'a, '_>,
+    unit: &Unit<'a>,
+    unstable_opts: &mut bool,
+) -> CargoResult<Vec<OsString>> {
+    let mut result = Vec::new();
+    let deps = cx.unit_deps(unit);
+
+    // Closure to add one dependency to `result`.
+    let mut link_to = |dep: &UnitDep<'a>,
+                       extern_crate_name: InternedString,
+                       noprelude: bool|
+     -> CargoResult<()> {
         let mut value = OsString::new();
-        value.push(dep.extern_crate_name.as_str());
+        let mut opts = Vec::new();
+        if unit
+            .pkg
+            .manifest()
+            .features()
+            .require(Feature::public_dependency())
+            .is_ok()
+            && !dep.public
+        {
+            opts.push("priv");
+            *unstable_opts = true;
+        }
+        if noprelude {
+            opts.push("noprelude");
+            *unstable_opts = true;
+        }
+        if !opts.is_empty() {
+            value.push(opts.join(","));
+            value.push(":");
+        }
+        value.push(extern_crate_name.as_str());
         value.push("=");
 
         let mut pass = |file| {
             let mut value = value.clone();
             value.push(file);
-
-            if current
-                .pkg
-                .manifest()
-                .features()
-                .require(Feature::public_dependency())
-                .is_ok()
-                && !dep.public
-            {
-                cmd.arg("--extern-private");
-                *need_unstable_opts = true;
-            } else {
-                cmd.arg("--extern");
-            }
-
-            cmd.arg(&value);
+            result.push(OsString::from("--extern"));
+            result.push(value);
         };
 
         let outputs = cx.outputs(&dep.unit)?;
@@ -995,7 +989,7 @@ fn build_deps_args<'a, 'cfg>(
             _ => None,
         });
 
-        if cx.only_requires_rmeta(current, &dep.unit) {
+        if cx.only_requires_rmeta(unit, &dep.unit) {
             let (output, _rmeta) = outputs
                 .find(|(_output, rmeta)| *rmeta)
                 .expect("failed to find rlib dep for pipelined dep");
@@ -1008,7 +1002,46 @@ fn build_deps_args<'a, 'cfg>(
             }
         }
         Ok(())
+    };
+
+    for dep in deps {
+        if dep.unit.target.linkable() && !dep.unit.mode.is_doc() {
+            link_to(&dep, dep.extern_crate_name, dep.noprelude)?;
+            // A renamed std package will cause problems with rustc because
+            // some packages like `std` are loaded internally, and rustc will
+            // fail to find them. The solution here is to have a second
+            // `--extern` flag with the real name included.
+            if !unit.is_std && dep.unit.is_std && dep.extern_crate_name != dep.unit.pkg.name() {
+                link_to(&dep, dep.unit.pkg.name(), true)?;
+            }
+        }
     }
+
+    if !cx.bcx.build_config.build_std || unit.kind.is_host() {
+        // This is only needed in non-build-std mode because in build-std mode
+        // the --extern flags are added from the unit graph above.
+        for dep in unit.pkg.dependencies() {
+            if dep.source_id().is_std() && cx.bcx.dep_activated(unit, dep) {
+                // Ensure this is added to the extern prelude.
+                // TODO: does it make sense to honor private?
+                result.push(OsString::from("--extern"));
+                match dep.explicit_name_in_toml() {
+                    Some(name) => {
+                        result.push(OsString::from(format!("{}={}", name, dep.package_name())));
+                    }
+                    None => {
+                        result.push(OsString::from(dep.package_name().as_str()));
+                    }
+                }
+                *unstable_opts = true;
+            }
+        }
+        // If the package did not list any explicit deps, then there is no
+        // need for `--extern` flags. The deps will be picked up from the
+        // sysroot via `extern crate` items.
+    }
+
+    Ok(result)
 }
 
 fn envify(s: &str) -> String {

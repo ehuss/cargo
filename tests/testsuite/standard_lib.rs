@@ -1,6 +1,6 @@
 use cargo_test_support::registry::{Dependency, Package};
 use cargo_test_support::ProjectBuilder;
-use cargo_test_support::{is_nightly, paths, project, rustc_host, Execs};
+use cargo_test_support::{basic_manifest, is_nightly, paths, project, rustc_host, Execs};
 use std::path::PathBuf;
 
 struct Setup {
@@ -92,8 +92,14 @@ fn setup() -> Option<Setup> {
 
                     let is_sysroot_crate = env::var_os("RUSTC_BOOTSTRAP").is_some();
                     if is_sysroot_crate {
-                        let arg = args.iter().position(|a| a == "--sysroot").unwrap();
-                        args[arg + 1] = env::var("REAL_SYSROOT").unwrap();
+                        args.push("--sysroot".to_string());
+                        args.push(env::var("REAL_SYSROOT").unwrap());
+                    } else if args.iter().any(|arg| arg == "--target") {
+                        // build-std target unit
+                        args.push("--sysroot".to_string());
+                        args.push("/path/to/nowhere".to_string());
+                    } else {
+                        // host unit, do not use sysroot
                     }
 
                     let ret = Command::new(&args[0]).args(&args[1..]).status().unwrap();
@@ -238,7 +244,7 @@ fn basic() {
         )
         .build();
 
-    p.cargo("check").build_std(&setup).target_host().run();
+    p.cargo("check -v").build_std(&setup).target_host().run();
     p.cargo("build").build_std(&setup).target_host().run();
     p.cargo("run").build_std(&setup).target_host().run();
     p.cargo("test").build_std(&setup).target_host().run();
@@ -734,7 +740,8 @@ fn explicit_private() {
         .build_std(&setup)
         .target_host()
         .with_status(101)
-        .with_stderr_contains("error[E0658]: use of unstable library feature 'rustc_private'[..]")
+        // can't find crate
+        .with_stderr_contains("error[E0463]: [..]")
         .run();
 }
 
@@ -754,6 +761,9 @@ fn explicit_test() {
                 name = "foo"
                 version = "0.1.0"
 
+                [dependencies]
+                std = {stdlib = true}
+
                 [dev-dependencies]
                 test = {stdlib = true}
             "#,
@@ -770,15 +780,11 @@ fn explicit_test() {
         )
         .build();
 
-    // TODO: remove --lib when doc tests are supported
-    p.cargo("test -v --lib")
-        .build_std(&setup)
-        .target_host()
-        .run();
+    p.cargo("test -v").build_std(&setup).target_host().run();
 }
 
 #[cargo_test]
-fn implicit_test_no_harness() {
+fn test_no_harness() {
     // Do not build libtest if not using a harness.
     let setup = match setup() {
         Some(s) => s,
@@ -788,9 +794,14 @@ fn implicit_test_no_harness() {
         .file(
             "Cargo.toml",
             r#"
+                cargo-features = ["explicit-std"]
+
                 [package]
                 name = "foo"
                 version = "0.1.0"
+
+                [dependencies]
+                std.stdlib = true
 
                 [lib]
                 harness = false
@@ -810,6 +821,76 @@ fn implicit_test_no_harness() {
         .target_host()
         .with_stderr_does_not_contain("[COMPILING] test[..]")
         .run();
+}
+
+#[cargo_test]
+fn implicit_default_build() {
+    // What gets built and what is in scope if nothing is explicitly listed.
+    let setup = match setup() {
+        Some(s) => s,
+        None => return,
+    };
+    let p = project()
+        .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
+        .file(
+            "src/lib.rs",
+            r#"
+                pub fn f() {
+                    let _ = std::custom_api();
+                    let _ = core::custom_api();
+                }
+            "#,
+        )
+        .build();
+
+    p.cargo("build -v")
+        .build_std(&setup)
+        .target_host()
+        .with_stderr_contains("[COMPILING] core[..]")
+        .with_stderr_contains("[COMPILING] alloc[..]")
+        .with_stderr_contains("[COMPILING] std[..]")
+        .with_stderr_contains("[COMPILING] test[..]")
+        .with_stderr_contains("[COMPILING] proc_macro[..]")
+        .run();
+
+    p.change_file(
+        "src/lib.rs",
+        "
+            pub fn f() {
+                let _ = alloc::custom_api();
+                let _ = test::custom_api();
+                let _ = proc_macro::custom_api();
+            }
+        ",
+    );
+    p.cargo("build -v")
+        .build_std(&setup)
+        .target_host()
+        .with_status(101)
+        // error[E0433]: failed to resolve: use of undeclared type or module
+        .with_stderr_contains("error[E0433][..]`alloc`[..]")
+        .with_stderr_contains("error[E0433][..]`test`[..]")
+        .with_stderr_contains("error[E0433][..]`proc_macro`[..]")
+        .run();
+
+    // Add `extern crate`, make sure it works.
+    p.change_file(
+        "src/lib.rs",
+        "
+            #![feature(test)]
+            extern crate alloc;
+            extern crate test;
+            extern crate proc_macro;
+
+            pub fn f() {
+                let _ = alloc::custom_api();
+                let _ = test::custom_api();
+                let _ = proc_macro::custom_api();
+            }
+        ",
+    );
+
+    p.cargo("build -v").build_std(&setup).target_host().run();
 }
 
 #[cargo_test]
@@ -844,7 +925,7 @@ fn skips_target_std_if_not_enabled() {
             r#"
                 #![no_std]
                 pub fn foo() {
-                    let _ = alloc::string::String::new();
+                    let _ = alloc::custom_api();
                 }
             "#,
         )
@@ -867,6 +948,7 @@ fn skips_target_std_if_not_enabled() {
 
 #[cargo_test]
 fn optional_std() {
+    // optional=true explicit dep
     let setup = match setup() {
         Some(s) => s,
         None => return,
@@ -891,7 +973,7 @@ fn optional_std() {
             r#"
                 #![no_std]
                 pub fn foo() {
-                    let _ = alloc::string::String::new();
+                    let _ = alloc::custom_api();
                 }
             "#,
         )
@@ -911,4 +993,109 @@ fn optional_std() {
         .target_host()
         .with_stderr_contains("[..]liballoc[..]")
         .run();
+}
+
+#[cargo_test]
+fn build_dep_doesnt_build() {
+    // Explicit build dependencies do not influence what gets built.
+    let setup = match setup() {
+        Some(s) => s,
+        None => return,
+    };
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2018"
+
+                [dependencies]
+                core.stdlib = true
+
+                [build-dependencies]
+                alloc.stdlib = true
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            r#"
+                #![no_std]
+                fn f() {
+                    let _ = alloc::custom_api();
+                }
+            "#,
+        )
+        .file(
+            "build.rs",
+            r#"
+                fn main() {
+                    let _ = alloc::string::String::new();
+                }
+            "#,
+        )
+        .build();
+
+    p.cargo("build -v")
+        .build_std(&setup)
+        .target_host()
+        .with_status(101)
+        // error[E0433]: failed to resolve: use of undeclared type or module `alloc`
+        .with_stderr_contains("error[E0433][..]")
+        .run();
+
+    p.change_file("src/lib.rs", "#![no_std]");
+
+    p.cargo("build -v").build_std(&setup).target_host().run();
+}
+
+#[cargo_test]
+fn rename() {
+    // a `package` alias
+    let setup = match setup() {
+        Some(s) => s,
+        None => return,
+    };
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["explicit-std"]
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                corealias = {stdlib=true, package="core"}
+                stdalias = {stdlib=true, package="std"}
+                allocalias = {stdlib=true, package="alloc"}
+
+                [dev-dependencies]
+                testalias = {stdlib=true, package="test"}
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            r#"
+                #![cfg_attr(test, feature(test))]
+
+                pub fn f() {
+                    let _ = corealias::custom_api();
+                    let _ = stdalias::custom_api();
+                    let _ = allocalias::custom_api();
+                }
+
+                #[cfg(test)]
+                #[bench]
+                fn b1(b: &mut testalias::Bencher) {
+                    b.iter(|| ())
+                }
+            "#,
+        )
+        .build();
+
+    p.cargo("build -v").build_std(&setup).target_host().run();
+    p.cargo("test -v").build_std(&setup).target_host().run();
 }

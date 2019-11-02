@@ -40,6 +40,7 @@ pub struct UnitDep<'a> {
     pub extern_crate_name: InternedString,
     /// Whether or not this is a public dependency.
     pub public: bool,
+    pub noprelude: bool,
 }
 
 /// Collection of stuff used while creating the `UnitGraph`.
@@ -141,7 +142,7 @@ fn find_std_deps<'a>(
     // Collect anything explicitly listed.
     for unit in graph.keys() {
         for dep in unit.pkg.dependencies() {
-            if dep.source_id().is_std() && bcx.dep_activated(unit, dep) {
+            if dep.source_id().is_std() && bcx.dep_activated(unit, dep) && !dep.is_build() {
                 let pkg_id = std_resolve.query(&dep.package_name()).chain_err(|| {
                     failure::format_err!(
                         "stdlib dependency `{}` not found, required by package `{}`",
@@ -160,24 +161,24 @@ fn find_std_deps<'a>(
                 .into_iter()
                 .map(|name| std_resolve.query(&name).expect("stdlib missing")),
         );
+    } else {
+        // Add "test" if anything needs it.
+        let has_test = graph.keys().any(|unit| {
+            // Tests with their own harness don't need libtest.
+            unit.mode.is_rustc_test() && unit.target.harness()
+        });
+        // Only include implicit libtest if `std` is already included. This is a
+        // special case when using custom test frameworks with no_std.
+        let has_std = result.iter().any(|pkg_id| pkg_id.name().as_str() == "std");
+        if has_test && has_std {
+            result.insert(std_resolve.query("test").expect("test missing"));
+        }
     }
-    // Add "test" if anything needs it.
-    let has_test = graph.keys().any(|unit| {
-        // Tests with their own harness don't need libtest.
-        unit.mode.is_rustc_test() && unit.target.harness()
-    });
-    // Only include implicit libtest if `std` is already included. This is a
-    // special case when using custom test frameworks with no_std.
-    let has_std = result.iter().any(|pkg_id| pkg_id.name().as_str() == "std");
-    if has_test && has_std {
-        result.insert(std_resolve.query("test").expect("test missing"));
+    // These are required.
+    // TODO: panic based on profile
+    for name in &["compiler_builtins", "panic_unwind", "panic_abort"] {
+        result.insert(std_resolve.query(name).expect("builtin crate missing"));
     }
-    // Always ensure compiler_builtins is included.
-    result.insert(
-        std_resolve
-            .query("compiler_builtins")
-            .expect("compiler_builtins missing"),
-    );
     Ok(result)
 }
 
@@ -193,49 +194,90 @@ fn attach_std_deps<'a, 'cfg>(
         if unit.kind.is_host() || unit.mode.is_run_custom_build() {
             continue;
         }
-        // Collect std deps.
-        let explicit_std_deps = unit
-            .pkg
-            .dependencies()
-            .iter()
-            .filter(|dep| dep.source_id().is_std() && bcx.dep_activated(unit, dep));
-        let mut std_units: Vec<Unit<'a>> = explicit_std_deps
-            .map(|dep| std_roots[&dep.package_name()])
-            .collect();
-        let has_explicit_std = unit
-            .pkg
-            .dependencies()
-            .iter()
-            .any(|dep| dep.source_id().is_std());
+        // Collect explicit std deps.
+        let mut has_explicit_std = false;
+        let mut has_test = false;
+        let test_str = InternedString::new("test");
+        for dep in unit.pkg.dependencies() {
+            if !dep.source_id().is_std() {
+                continue;
+            }
+            has_explicit_std = true;
+            if !bcx.dep_activated(unit, dep) || dep.is_build() {
+                continue;
+            }
+            let std_unit = std_roots[&dep.package_name()];
+            if dep.package_name() == test_str {
+                has_test = true;
+            }
+            deps.push(UnitDep {
+                unit: std_unit,
+                // TODO: handle UnitFor::new_test?
+                unit_for: UnitFor::new_normal(),
+                extern_crate_name: dep.name_in_toml(),
+                // TODO: Does this `public` make sense?
+                public: true,
+                noprelude: false,
+            });
+        }
         if !has_explicit_std {
-            // No explicit deps, use the union of all explicit deps.
-            std_units.extend(std_roots.values());
+            // No explicit deps found, use the union of all explicit deps.
+            for std_unit in std_roots.values() {
+                if std_unit.pkg.name() == test_str {
+                    has_test = true;
+                }
+                deps.push(UnitDep {
+                    unit: *std_unit,
+                    // TODO: handle UnitFor::new_test?
+                    unit_for: UnitFor::new_normal(),
+                    extern_crate_name: std_unit.pkg.name(),
+                    // TODO: Does this `public` make sense?
+                    public: true,
+                    // Do not add to prelude, to match implicit sysroot behavior.
+                    noprelude: true,
+                });
+            }
         }
         // Add `test` if needed.
-        let test_str = InternedString::new("test");
-        if unit.mode.is_rustc_test()
+        if !has_test
+            && unit.mode.is_rustc_test()
             // Don't include test if harness is disabled.
             && unit.target.harness()
             // Only include test if `std` is enabled (see find_std_deps).
             && std_roots.contains_key(&test_str)
-            // Don't include it twice if it is explicitly listed.
-            && !std_units.iter().any(|unit| unit.pkg.name() == test_str)
         {
-            std_units.push(std_roots[&test_str]);
+            let test_unit = std_roots[&test_str];
+            deps.push(UnitDep {
+                unit: test_unit,
+                // TODO: handle UnitFor::new_test?
+                unit_for: UnitFor::new_normal(),
+                extern_crate_name: test_unit.pkg.name(),
+                // TODO: Does this `public` make sense?
+                public: true,
+                // Do not add to prelude, the compiler uses this implicitly.
+                noprelude: true,
+            });
         }
-        // compiler_builtins must be built for every crate.
-        // Not sure if there is some way to remove this. Maybe add to
-        // libcore/Cargo.toml? But what about no_core crates?
-        std_units.push(std_roots[&InternedString::new("compiler_builtins")]);
-
-        // Add to the graph.
-        deps.extend(std_units.into_iter().map(|unit| UnitDep {
-            unit,
-            unit_for: UnitFor::new_normal(),
-            extern_crate_name: unit.pkg.name(),
-            // TODO: Does this `public` make sense?
-            public: true,
-        }));
+        // Make sure required crates are included.
+        let required = &["compiler_builtins", "panic_unwind", "panic_abort"];
+        for name in required {
+            if !deps
+                .iter()
+                .any(|unit_dep| unit_dep.unit.pkg.name().as_str() == *name)
+            {
+                let req_unit = std_roots[&InternedString::new(name)];
+                deps.push(UnitDep {
+                    unit: req_unit,
+                    // TODO: handle UnitFor::new_test?
+                    unit_for: UnitFor::new_normal(),
+                    extern_crate_name: req_unit.pkg.name(),
+                    // TODO: Does this `public` make sense?
+                    public: true,
+                    // Do not add to prelude, the compiler uses this internally.
+                    noprelude: true,
+                });
+            }
+        }
     }
     // And also include the dependencies of the standard library itself.
     for (unit, deps) in std_graph.into_iter() {
@@ -650,6 +692,7 @@ fn new_unit_dep_with_profile<'a>(
         unit_for,
         extern_crate_name,
         public,
+        noprelude: false,
     })
 }
 

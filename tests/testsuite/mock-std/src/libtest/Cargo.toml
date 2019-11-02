@@ -9,6 +9,7 @@ path = "lib.rs"
 
 [dependencies]
 proc_macro = { path = "../libproc_macro" }
+panic_abort = { path = "../libpanic_abort" }
 panic_unwind = { path = "../libpanic_unwind" }
 compiler_builtins = { path = "../libcompiler_builtins" }
 registry-dep-using-std = { version = "*", features = ['mockbuild'] }
