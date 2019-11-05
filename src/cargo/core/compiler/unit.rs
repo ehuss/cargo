@@ -106,6 +106,7 @@ impl<'a> fmt::Debug for Unit<'a> {
             .field("kind", &self.kind)
             .field("mode", &self.mode)
             .field("features", &self.features)
+            .field("is_std", &self.is_std)
             .finish()
     }
 }

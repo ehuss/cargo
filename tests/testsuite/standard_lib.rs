@@ -314,6 +314,8 @@ fn lib_nostd() {
         .build_std(&setup)
         .target_host()
         .with_stderr_does_not_contain("[..]libstd[..]")
+        // Panic runtimes should not be built or used.
+        .with_stderr_does_not_contain("[..]panic[..]")
         .run();
 }
 
@@ -1098,4 +1100,65 @@ fn rename() {
 
     p.cargo("build -v").build_std(&setup).target_host().run();
     p.cargo("test -v").build_std(&setup).target_host().run();
+}
+
+#[cargo_test]
+fn panic_strategy_abort() {
+    // "abort" strategy shouldn't use "unwind".
+    // NOTE: panic_unwind is still built because it is a dependency of libstd.
+    // Cargo could in theory disable the `panic-unwind` feature, but
+    // unfortunately it is not known whether or not the unwind strategy is
+    // needed when the standard lib is resolved. If it could be done later,
+    // then Cargo could completely skip the unwind crate, but there is a
+    // mutability problem with PackageSet that prevents it. Alternatively,
+    // if feature resolution is removed from the resolver, then it can control
+    // the panic-unwind feature more easily.
+    let setup = match setup() {
+        Some(s) => s,
+        None => return,
+    };
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [profile.dev]
+                panic = "abort"
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            r#"
+                pub fn f() {
+                    panic!("smurf");
+                }
+            "#,
+        )
+        .file("src/main.rs", "fn main() { foo::f(); }")
+        .build();
+    p.cargo("run -v")
+        .build_std(&setup)
+        .target_host()
+        .with_stderr_contains("[..]panicked at 'smurf'[..]")
+        .with_stderr_contains("[RUNNING] [..]--crate-name foo[..]src/lib.rs[..]-C panic=abort[..]")
+        .with_stderr_contains("[RUNNING] [..]--crate-name foo[..]src/main.rs[..]-C panic=abort[..]")
+        // Exits with signal.
+        .without_status()
+        .run();
+
+    // Implied -Zpanic-abort-tests
+    p.cargo("test -v")
+        .build_std(&setup)
+        .target_host()
+        .with_stderr_contains(
+            "[RUNNING] [..]--crate-name foo[..]src/lib.rs[..]-C panic=abort[..]--test[..]",
+        )
+        .with_stderr_contains(
+            "[RUNNING] [..]--crate-name foo[..]src/main.rs[..]-C panic=abort[..]--test[..]",
+        )
+        .with_stderr_contains("[RUNNING] `rustdoc[..]--test[..]")
+        .run();
 }

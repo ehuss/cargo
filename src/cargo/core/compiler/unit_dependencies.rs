@@ -174,11 +174,13 @@ fn find_std_deps<'a>(
             result.insert(std_resolve.query("test").expect("test missing"));
         }
     }
-    // These are required.
-    // TODO: panic based on profile
-    for name in &["compiler_builtins", "panic_unwind", "panic_abort"] {
-        result.insert(std_resolve.query(name).expect("builtin crate missing"));
-    }
+    // I think this could be removed if compiler_builtins was listed as
+    // dependency in libcore.
+    result.insert(
+        std_resolve
+            .query("compiler_builtins")
+            .expect("compiler_builtins missing"),
+    );
     Ok(result)
 }
 
@@ -194,15 +196,25 @@ fn attach_std_deps<'a, 'cfg>(
         if unit.kind.is_host() || unit.mode.is_run_custom_build() {
             continue;
         }
+        let mut add_dep = |dep_unit, extern_crate_name, noprelude| {
+            deps.push(UnitDep {
+                unit: dep_unit,
+                unit_for: UnitFor::new_normal(),
+                extern_crate_name,
+                // TODO: Does this `public` make sense?
+                public: true,
+                noprelude,
+            });
+        };
         // Collect explicit std deps.
-        let mut has_explicit_std = false;
+        let mut has_explicit_stdlib = false;
         let mut has_test = false;
         let test_str = InternedString::new("test");
         for dep in unit.pkg.dependencies() {
             if !dep.source_id().is_std() {
                 continue;
             }
-            has_explicit_std = true;
+            has_explicit_stdlib = true;
             if !bcx.dep_activated(unit, dep) || dep.is_build() {
                 continue;
             }
@@ -210,32 +222,15 @@ fn attach_std_deps<'a, 'cfg>(
             if dep.package_name() == test_str {
                 has_test = true;
             }
-            deps.push(UnitDep {
-                unit: std_unit,
-                // TODO: handle UnitFor::new_test?
-                unit_for: UnitFor::new_normal(),
-                extern_crate_name: dep.name_in_toml(),
-                // TODO: Does this `public` make sense?
-                public: true,
-                noprelude: false,
-            });
+            add_dep(std_unit, dep.name_in_toml(), false);
         }
-        if !has_explicit_std {
+        if !has_explicit_stdlib {
             // No explicit deps found, use the union of all explicit deps.
             for std_unit in std_roots.values() {
                 if std_unit.pkg.name() == test_str {
                     has_test = true;
                 }
-                deps.push(UnitDep {
-                    unit: *std_unit,
-                    // TODO: handle UnitFor::new_test?
-                    unit_for: UnitFor::new_normal(),
-                    extern_crate_name: std_unit.pkg.name(),
-                    // TODO: Does this `public` make sense?
-                    public: true,
-                    // Do not add to prelude, to match implicit sysroot behavior.
-                    noprelude: true,
-                });
+                add_dep(*std_unit, std_unit.pkg.name(), true);
             }
         }
         // Add `test` if needed.
@@ -247,33 +242,29 @@ fn attach_std_deps<'a, 'cfg>(
             && std_roots.contains_key(&test_str)
         {
             let test_unit = std_roots[&test_str];
-            deps.push(UnitDep {
-                unit: test_unit,
-                // TODO: handle UnitFor::new_test?
-                unit_for: UnitFor::new_normal(),
-                extern_crate_name: test_unit.pkg.name(),
-                // TODO: Does this `public` make sense?
-                public: true,
-                // Do not add to prelude, the compiler uses this implicitly.
-                noprelude: true,
-            });
+            add_dep(test_unit, test_unit.pkg.name(), true);
         }
-        // Make sure required crates are included.
-        let required = &["compiler_builtins", "panic_unwind", "panic_abort"];
-        for name in required {
-            if !deps
+        // Make sure internal crates are included if available.
+        let internal = &["compiler_builtins", "panic_unwind", "panic_abort"];
+        for name in internal {
+            // This probably isn't necessary, but just be sure not to add it twice.
+            if deps
                 .iter()
                 .any(|unit_dep| unit_dep.unit.pkg.name() == *name)
             {
-                let req_unit = std_roots[&InternedString::new(name)];
+                continue;
+            }
+            // panic crates may be missing if only building core.
+            if let Some(std_unit) = std_graph
+                .keys()
+                .find(|unit| unit.pkg.name() == *name && unit.target.is_lib())
+            {
                 deps.push(UnitDep {
-                    unit: req_unit,
-                    // TODO: handle UnitFor::new_test?
+                    unit: *std_unit,
                     unit_for: UnitFor::new_normal(),
-                    extern_crate_name: req_unit.pkg.name(),
+                    extern_crate_name: std_unit.pkg.name(),
                     // TODO: Does this `public` make sense?
                     public: true,
-                    // Do not add to prelude, the compiler uses this internally.
                     noprelude: true,
                 });
             }

@@ -406,7 +406,10 @@ impl CliUnstable {
             "install-upgrade" => self.install_upgrade = parse_empty(k, v)?,
             "named-profiles" => self.named_profiles = parse_empty(k, v)?,
             "binary-dep-depinfo" => self.binary_dep_depinfo = parse_empty(k, v)?,
-            "build-std" => self.build_std = parse_empty(k, v)?,
+            "build-std" => {
+                self.build_std = parse_empty(k, v)?;
+                self.panic_abort_tests = true;
+            }
             "timings" => self.timings = Some(parse_timings(v)),
             "doctest-xcompile" => self.doctest_xcompile = parse_empty(k, v)?,
             "panic-abort-tests" => self.panic_abort_tests = parse_empty(k, v)?,
