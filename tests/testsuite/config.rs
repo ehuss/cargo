@@ -366,11 +366,8 @@ lto = false
     );
 
     let config = ConfigBuilder::new()
-        .unstable_flag("advanced-env")
         .env("CARGO_PROFILE_DEV_CODEGEN_UNITS", "5")
         .env("CARGO_PROFILE_DEV_BUILD_OVERRIDE_CODEGEN_UNITS", "11")
-        .env("CARGO_PROFILE_DEV_PACKAGE_env_CODEGEN_UNITS", "13")
-        .env("CARGO_PROFILE_DEV_PACKAGE_bar_OPT_LEVEL", "2")
         .build();
 
     // TODO: don't use actual `tomlprofile`.
@@ -378,14 +375,7 @@ lto = false
     let mut packages = BTreeMap::new();
     let key = toml::ProfilePackageSpec::Spec(::cargo::core::PackageIdSpec::parse("bar").unwrap());
     let o_profile = toml::TomlProfile {
-        opt_level: Some(toml::TomlOptLevel("2".to_string())),
         codegen_units: Some(9),
-        ..Default::default()
-    };
-    packages.insert(key, o_profile);
-    let key = toml::ProfilePackageSpec::Spec(::cargo::core::PackageIdSpec::parse("env").unwrap());
-    let o_profile = toml::TomlProfile {
-        codegen_units: Some(13),
         ..Default::default()
     };
     packages.insert(key, o_profile);
@@ -576,43 +566,6 @@ opt-level = 'foo'
          could not load config key `profile.dev.opt-level`: \
          must be an integer, `z`, or `s`, but found: asdf",
     );
-}
-
-#[cargo_test]
-fn load_nested() {
-    write_config(
-        "\
-[nest.foo]
-f1 = 1
-f2 = 2
-[nest.bar]
-asdf = 3
-",
-    );
-
-    let config = ConfigBuilder::new()
-        .unstable_flag("advanced-env")
-        .env("CARGO_NEST_foo_f2", "3")
-        .env("CARGO_NESTE_foo_f1", "1")
-        .env("CARGO_NESTE_foo_f2", "3")
-        .env("CARGO_NESTE_bar_asdf", "3")
-        .build();
-
-    type Nested = HashMap<String, HashMap<String, u8>>;
-
-    let n: Nested = config.get("nest").unwrap();
-    let mut expected = HashMap::new();
-    let mut foo = HashMap::new();
-    foo.insert("f1".to_string(), 1);
-    foo.insert("f2".to_string(), 3);
-    expected.insert("foo".to_string(), foo);
-    let mut bar = HashMap::new();
-    bar.insert("asdf".to_string(), 3);
-    expected.insert("bar".to_string(), bar);
-    assert_eq!(n, expected);
-
-    let n: Nested = config.get("neste").unwrap();
-    assert_eq!(n, expected);
 }
 
 #[cargo_test]

@@ -24,7 +24,7 @@ pub struct ConfigKey {
 
 impl ConfigKey {
     /// Creates a new blank configuration key which is ready to get built up by
-    /// using `push` and `push_sensitive`.
+    /// using `push`.
     pub fn new() -> ConfigKey {
         ConfigKey {
             env: "CARGO".to_string(),
@@ -53,21 +53,9 @@ impl ConfigKey {
     /// uppercase characters.
     pub fn push(&mut self, name: &str) {
         let env = name.replace("-", "_").to_uppercase();
-        self._push(&env, name);
-    }
-
-    /// Performs the same function as `push` except that the corresponding
-    /// environment variable does not get the uppercase letters of `name` but
-    /// instead `name` is pushed raw onto the corresponding environment
-    /// variable.
-    pub fn push_sensitive(&mut self, name: &str) {
-        self._push(name, name);
-    }
-
-    fn _push(&mut self, env: &str, config: &str) {
-        self.parts.push((config.to_string(), self.env.len()));
+        self.parts.push((name.to_string(), self.env.len()));
         self.env.push_str("_");
-        self.env.push_str(env);
+        self.env.push_str(&env);
     }
 
     /// Rewinds this `ConfigKey` back to the state it was at before the last

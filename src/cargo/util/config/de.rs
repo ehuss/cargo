@@ -187,15 +187,9 @@ impl<'de, 'config> de::Deserializer<'de> for Deserializer<'config> {
 struct ConfigMapAccess<'config> {
     de: Deserializer<'config>,
     /// The fields that this map should deserialize.
-    fields: Vec<KeyKind>,
+    fields: Vec<String>,
     /// Current field being deserialized.
     field_index: usize,
-}
-
-#[derive(Debug, PartialEq, Eq, Hash)]
-enum KeyKind {
-    Normal(String),
-    CaseSensitive(String),
 }
 
 impl<'config> ConfigMapAccess<'config> {
@@ -204,21 +198,7 @@ impl<'config> ConfigMapAccess<'config> {
         if let Some(mut v) = de.config.get_table(&de.key)? {
             // `v: Value<HashMap<String, CV>>`
             for (key, _value) in v.val.drain() {
-                fields.push(KeyKind::CaseSensitive(key));
-            }
-        }
-        if de.config.cli_unstable().advanced_env {
-            // `CARGO_PROFILE_DEV_PACKAGE_`
-            let env_prefix = format!("{}_", de.key.as_env_key());
-            for env_key in de.config.env.keys() {
-                if env_key.starts_with(&env_prefix) {
-                    // `CARGO_PROFILE_DEV_PACKAGE_bar_OPT_LEVEL = 3`
-                    let rest = &env_key[env_prefix.len()..];
-                    // `rest = bar_OPT_LEVEL`
-                    let part = rest.splitn(2, '_').next().unwrap();
-                    // `part = "bar"`
-                    fields.push(KeyKind::CaseSensitive(part.to_string()));
-                }
+                fields.push(key);
             }
         }
         Ok(ConfigMapAccess {
@@ -232,10 +212,7 @@ impl<'config> ConfigMapAccess<'config> {
         de: Deserializer<'config>,
         fields: &'static [&'static str],
     ) -> Result<ConfigMapAccess<'config>, ConfigError> {
-        let fields: Vec<KeyKind> = fields
-            .iter()
-            .map(|field| KeyKind::Normal(field.to_string()))
-            .collect();
+        let fields: Vec<String> = fields.iter().map(|field| field.to_string()).collect();
 
         // Assume that if we're deserializing a struct it exhaustively lists all
         // possible fields on this key that we're *supposed* to use, so take
@@ -243,10 +220,7 @@ impl<'config> ConfigMapAccess<'config> {
         // fields and warn about them.
         if let Some(mut v) = de.config.get_table(&de.key)? {
             for (t_key, value) in v.val.drain() {
-                if fields.iter().any(|k| match k {
-                    KeyKind::Normal(s) => s == &t_key,
-                    KeyKind::CaseSensitive(s) => s == &t_key,
-                }) {
+                if fields.iter().any(|k| k == &t_key) {
                     continue;
                 }
                 de.config.shell().warn(format!(
@@ -276,9 +250,7 @@ impl<'de, 'config> de::MapAccess<'de> for ConfigMapAccess<'config> {
         if self.field_index >= self.fields.len() {
             return Ok(None);
         }
-        let field = match &self.fields[self.field_index] {
-            KeyKind::Normal(s) | KeyKind::CaseSensitive(s) => s.as_str(),
-        };
+        let field = self.fields[self.field_index].as_str();
         seed.deserialize(field.into_deserializer()).map(Some)
     }
 
@@ -289,16 +261,7 @@ impl<'de, 'config> de::MapAccess<'de> for ConfigMapAccess<'config> {
         let field = &self.fields[self.field_index];
         self.field_index += 1;
         // Set this as the current key in the deserializer.
-        let field = match field {
-            KeyKind::Normal(field) => {
-                self.de.key.push(&field);
-                field
-            }
-            KeyKind::CaseSensitive(field) => {
-                self.de.key.push_sensitive(&field);
-                field
-            }
-        };
+        self.de.key.push(&field);
         // Env vars that are a prefix of another with a dash/underscore cannot
         // be supported by our serde implementation, so check for them here.
         // Example:
@@ -317,12 +280,10 @@ impl<'de, 'config> de::MapAccess<'de> for ConfigMapAccess<'config> {
         // CARGO_BUILD_TARGET isn't set. So we check for these prefixes and
         // disallow them here.
         let env_prefix = format!("{}_", field).replace('-', "_");
-        let env_prefix_ok = !self.fields.iter().any(|field| {
-            let field = match field {
-                KeyKind::Normal(s) | KeyKind::CaseSensitive(s) => s.as_str(),
-            };
-            field.replace('-', "_").starts_with(&env_prefix)
-        });
+        let env_prefix_ok = !self
+            .fields
+            .iter()
+            .any(|field| field.replace('-', "_").starts_with(&env_prefix));
 
         let result = seed.deserialize(Deserializer {
             config: self.de.config,
