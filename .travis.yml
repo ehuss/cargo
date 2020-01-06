@@ -1,0 +1,24 @@
+sudo: false
+language: rust
+matrix:
+  include:
+    - os: windows
+      rust: stable
+
+addons:
+  apt:
+    packages:
+      - libssl-dev
+
+install:
+  # Install OpenSSL on Windows
+  - if [ "${TRAVIS_OS_NAME}" = "windows" ]; then
+    curl -O "http://slproweb.com/download/Win64OpenSSL-1_1_0L.exe";
+    cmd.exe /C 'Win64OpenSSL-1_1_0L.exe /SILENT /VERYSILENT /SP- /DIR="C:\OpenSSL"';
+    export OPENSSL_LIB_DIR=/c/OpenSSL/lib;
+    export OPENSSL_INCLUDE_DIR=/c/OpenSSL/include;
+    export OPENSSL_DIR=/c/OpenSSL/bin;
+    fi
+
+script:
+  - echo "hi"
