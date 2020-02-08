@@ -279,6 +279,7 @@ pub fn compile_ws<'a>(
         ref export_dir,
     } = *options;
 
+    // Perform some pre-flight validation.
     match build_config.mode {
         CompileMode::Test
         | CompileMode::Build
@@ -299,6 +300,7 @@ pub fn compile_ws<'a>(
             }
         }
     }
+    config.validate_term_config()?;
 
     let profiles = Profiles::new(
         ws.profiles(),

@@ -19,9 +19,8 @@ fn alias_incorrect_config_type() {
     p.cargo("b-cargo-test -v")
         .with_status(101)
         .with_stderr_contains(
-            "\
-[ERROR] invalid configuration for key `alias.b-cargo-test`
-expected a list, but found a integer for [..]",
+            "[ERROR] error in [..]/foo/.cargo/config: \
+            `alias.b-cargo-test` expected array, but found a integer",
         )
         .run();
 }

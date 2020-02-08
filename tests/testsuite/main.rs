@@ -81,6 +81,7 @@ mod profile_custom;
 mod profile_overrides;
 mod profile_targets;
 mod profiles;
+mod progress;
 mod pub_priv;
 mod publish;
 mod publish_lockfile;
