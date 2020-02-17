@@ -375,8 +375,10 @@ impl<'a, 'cfg> Context<'a, 'cfg> {
     /// Returns the metadata hash for a RunCustomBuild unit.
     pub fn get_run_build_script_metadata(&self, unit: &Unit<'a>) -> Metadata {
         assert!(unit.mode.is_run_custom_build());
+        // Using symbol_hash vs filename_hash here shouldn't really matter.
+        // The value just needs to be unique per Unit.
         self.files()
-            .metadata(unit)
+            .filename_hash(unit)
             .expect("build script should always have hash")
     }
 

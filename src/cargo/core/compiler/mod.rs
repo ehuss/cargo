@@ -196,7 +196,7 @@ fn rustc<'a, 'cfg>(
     let crate_name = unit.target.crate_name();
 
     // Rely on `target_filenames` iterator as source of truth rather than rederiving filestem.
-    let rustc_dep_info_loc = if do_rename && cx.files().metadata(unit).is_none() {
+    let rustc_dep_info_loc = if do_rename && cx.files().filename_hash(unit).is_none() {
         root.join(&crate_name)
     } else {
         root.join(&cx.files().file_stem(unit))
@@ -837,15 +837,17 @@ fn build_base_args<'a, 'cfg>(
         cmd.arg("--cfg").arg(&format!("feature=\"{}\"", feat));
     }
 
-    match cx.files().metadata(unit) {
+    match cx.files().symbol_hash(unit) {
         Some(m) => {
             cmd.arg("-C").arg(&format!("metadata={}", m));
-            cmd.arg("-C").arg(&format!("extra-filename=-{}", m));
         }
         None => {
             cmd.arg("-C")
                 .arg(&format!("metadata={}", cx.files().target_short_hash(unit)));
         }
+    }
+    if let Some(m) = cx.files().filename_hash(unit) {
+        cmd.arg("-C").arg(&format!("extra-filename=-{}", m));
     }
 
     if rpath {

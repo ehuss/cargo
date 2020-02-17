@@ -1182,24 +1182,23 @@ fn reuse_shared_build_dep() {
 fn changing_rustflags_is_cached() {
     let p = project().file("src/lib.rs", "").build();
 
-    // This isn't ever cached, we always have to recompile
-    for _ in 0..2 {
-        p.cargo("build")
-            .with_stderr(
-                "\
+    p.cargo("build").run();
+    p.cargo("build")
+        .env("RUSTFLAGS", "-C linker=cc")
+        .with_stderr(
+            "\
 [COMPILING] foo v0.0.1 ([..])
 [FINISHED] dev [unoptimized + debuginfo] target(s) in [..]",
-            )
-            .run();
-        p.cargo("build")
-            .env("RUSTFLAGS", "-C linker=cc")
-            .with_stderr(
-                "\
-[COMPILING] foo v0.0.1 ([..])
-[FINISHED] dev [unoptimized + debuginfo] target(s) in [..]",
-            )
-            .run();
-    }
+        )
+        .run();
+    // This should not recompile!
+    p.cargo("build")
+        .with_stderr("[FINISHED] dev [unoptimized + debuginfo] target(s) in [..]")
+        .run();
+    p.cargo("build")
+        .env("RUSTFLAGS", "-C linker=cc")
+        .with_stderr("[FINISHED] dev [unoptimized + debuginfo] target(s) in [..]")
+        .run();
 }
 
 #[cargo_test]

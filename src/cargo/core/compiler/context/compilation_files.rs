@@ -73,7 +73,7 @@ pub struct CompilationFiles<'a, 'cfg> {
     ///
     /// `None` if the unit should not use a metadata data hash (like rustdoc,
     /// or some dylibs).
-    metas: HashMap<Unit<'a>, Option<Metadata>>,
+    metas: HashMap<Unit<'a>, Option<(Metadata, Metadata)>>,
     /// For each Unit, a list all files produced.
     outputs: HashMap<Unit<'a>, LazyCell<Arc<Vec<OutputFile>>>>,
 }
@@ -146,8 +146,12 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
     ///
     /// Returns `None` if the unit should not use a metadata data hash (like
     /// rustdoc, or some dylibs).
-    pub fn metadata(&self, unit: &Unit<'a>) -> Option<Metadata> {
-        self.metas[unit].clone()
+    pub fn symbol_hash(&self, unit: &Unit<'a>) -> Option<Metadata> {
+        self.metas[unit].map(|x| x.0).clone()
+    }
+
+    pub fn filename_hash(&self, unit: &Unit<'a>) -> Option<Metadata> {
+        self.metas[unit].map(|x| x.1).clone()
     }
 
     /// Gets the short hash based only on the `PackageId`.
@@ -182,7 +186,7 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
     pub fn pkg_dir(&self, unit: &Unit<'a>) -> String {
         let name = unit.pkg.package_id().name();
         match self.metas[unit] {
-            Some(ref meta) => format!("{}-{}", name, meta),
+            Some((_symbol_hash, filename_hash)) => format!("{}-{}", name, filename_hash),
             None => format!("{}-{}", name, self.target_short_hash(unit)),
         }
     }
@@ -243,7 +247,9 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
     /// Returns the file stem for a given target/profile combo (with metadata).
     pub fn file_stem(&self, unit: &Unit<'a>) -> String {
         match self.metas[unit] {
-            Some(ref metadata) => format!("{}-{}", unit.target.crate_name(), metadata),
+            Some((_symbol_hash, filename_hash)) => {
+                format!("{}-{}", unit.target.crate_name(), filename_hash)
+            }
             None => self.bin_stem(unit),
         }
     }
@@ -476,8 +482,8 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
 fn metadata_of<'a, 'cfg>(
     unit: &Unit<'a>,
     cx: &Context<'a, 'cfg>,
-    metas: &mut HashMap<Unit<'a>, Option<Metadata>>,
-) -> Option<Metadata> {
+    metas: &mut HashMap<Unit<'a>, Option<(Metadata, Metadata)>>,
+) -> Option<(Metadata, Metadata)> {
     if !metas.contains_key(unit) {
         let meta = compute_metadata(unit, cx, metas);
         metas.insert(*unit, meta);
@@ -491,8 +497,8 @@ fn metadata_of<'a, 'cfg>(
 fn compute_metadata<'a, 'cfg>(
     unit: &Unit<'a>,
     cx: &Context<'a, 'cfg>,
-    metas: &mut HashMap<Unit<'a>, Option<Metadata>>,
-) -> Option<Metadata> {
+    metas: &mut HashMap<Unit<'a>, Option<(Metadata, Metadata)>>,
+) -> Option<(Metadata, Metadata)> {
     if unit.mode.is_doc_test() {
         // Doc tests do not have metadata.
         return None;
@@ -554,15 +560,6 @@ fn compute_metadata<'a, 'cfg>(
     // when changing feature sets each lib is separately cached.
     unit.features.hash(&mut hasher);
 
-    // Mix in the target-metadata of all the dependencies of this target.
-    let mut deps_metadata = cx
-        .unit_deps(unit)
-        .iter()
-        .map(|dep| metadata_of(&dep.unit, cx, metas))
-        .collect::<Vec<_>>();
-    deps_metadata.sort();
-    deps_metadata.hash(&mut hasher);
-
     // Throw in the profile we're compiling with. This helps caching
     // `panic=abort` and `panic=unwind` artifacts, additionally with various
     // settings like debuginfo and whatnot.
@@ -604,5 +601,36 @@ fn compute_metadata<'a, 'cfg>(
     // with user dependencies.
     unit.is_std.hash(&mut hasher);
 
-    Some(Metadata(hasher.finish()))
+    let mut filename_hasher = hasher.clone();
+
+    // Mix in the target-metadata of all the dependencies of this target.
+    let mut deps_metadata = cx
+        .unit_deps(unit)
+        .iter()
+        .map(|dep| metadata_of(&dep.unit, cx, metas))
+        .collect::<Vec<_>>();
+    deps_metadata.sort();
+    for opt_meta in deps_metadata {
+        if let Some((symbol_hash, filename_hash)) = opt_meta {
+            symbol_hash.hash(&mut hasher);
+            filename_hash.hash(&mut filename_hasher);
+        }
+    }
+
+    // Throw in the rustflags we're compiling with. This helps when the target
+    // directory is a shared cache for projects with different cargo configs,
+    // or if the user is experimenting with different rustflags manually.
+    let flags = if unit.mode.is_doc() {
+        bcx.rustdocflags_args(unit)
+    } else {
+        bcx.rustflags_args(unit)
+    };
+    if !flags.is_empty() {
+        flags.hash(&mut filename_hasher);
+    }
+
+    Some((
+        Metadata(hasher.finish()),
+        Metadata(filename_hasher.finish()),
+    ))
 }
