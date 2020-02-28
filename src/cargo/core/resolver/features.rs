@@ -115,6 +115,8 @@ impl FeatureOpts {
         if let HasDevUnits::Yes = has_dev_units {
             opts.decouple_dev_deps = false;
         }
+        opts.ignore_inactive_targets = true;
+        opts.new_resolver = true;
         Ok(opts)
     }
 }

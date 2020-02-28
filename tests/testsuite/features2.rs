@@ -4,6 +4,7 @@ use cargo_test_support::project;
 use cargo_test_support::registry::{Dependency, Package};
 
 #[cargo_test]
+#[ignore]
 fn inactivate_targets() {
     // Basic test of `itarget`. A shared dependency where an inactive [target]
     // changes the features.
@@ -53,6 +54,7 @@ fn inactivate_targets() {
 }
 
 #[cargo_test]
+#[ignore]
 fn inactive_target_optional() {
     // Activating optional [target] dependencies for inactivate target.
     Package::new("common", "1.0.0")
@@ -685,6 +687,7 @@ fn cyclical_dev_dep() {
 }
 
 #[cargo_test]
+#[ignore]
 fn all_feature_opts() {
     // All feature options at once.
     Package::new("common", "1.0.0")
