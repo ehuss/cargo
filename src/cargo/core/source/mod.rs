@@ -55,8 +55,10 @@ pub trait Source {
     {
         let mut sources = SourceMap::new();
         sources.insert(self);
+        // TODO: add something to PackageSet to get owned value to avoid the clone here (who uses this method?)
         let pkg_set = PackageSet::new(&[package], sources, config)?;
-        Ok(pkg_set.get_one(package)?.clone())
+        let pkg = pkg_set.get_one(package)?;
+        Ok((**pkg).clone())
     }
 
     fn finish_download(&mut self, package: PackageId, contents: Vec<u8>) -> CargoResult<Package>;

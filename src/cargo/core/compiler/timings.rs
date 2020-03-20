@@ -12,9 +12,10 @@ use crate::util::{paths, CargoResult, Config};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
-pub struct Timings<'a, 'cfg> {
+pub struct Timings<'cfg> {
     config: &'cfg Config,
     /// Whether or not timings should be captured.
     enabled: bool,
@@ -39,10 +40,10 @@ pub struct Timings<'a, 'cfg> {
     /// Total number of dirty units.
     total_dirty: u32,
     /// Time tracking for each individual unit.
-    unit_times: Vec<UnitTime<'a>>,
+    unit_times: Vec<UnitTime>,
     /// Units that are in the process of being built.
     /// When they finished, they are moved to `unit_times`.
-    active: HashMap<JobId, UnitTime<'a>>,
+    active: HashMap<JobId, UnitTime>,
     /// Concurrency-tracking information. This is periodically updated while
     /// compilation progresses.
     concurrency: Vec<Concurrency>,
@@ -56,8 +57,8 @@ pub struct Timings<'a, 'cfg> {
 }
 
 /// Tracking information for an individual unit.
-struct UnitTime<'a> {
-    unit: Unit<'a>,
+struct UnitTime {
+    unit: Rc<Unit>,
     /// A string describing the cargo target.
     target: String,
     /// The time when this unit started as an offset in seconds from `Timings::start`.
@@ -68,9 +69,9 @@ struct UnitTime<'a> {
     /// from `start`.
     rmeta_time: Option<f64>,
     /// Reverse deps that are freed to run after this unit finished.
-    unlocked_units: Vec<Unit<'a>>,
+    unlocked_units: Vec<Rc<Unit>>,
     /// Same as `unlocked_units`, but unlocked by rmeta.
-    unlocked_rmeta_units: Vec<Unit<'a>>,
+    unlocked_rmeta_units: Vec<Rc<Unit>>,
 }
 
 /// Periodic concurrency tracking information.
@@ -91,8 +92,8 @@ struct Concurrency {
     rustc_parallelism: usize,
 }
 
-impl<'a, 'cfg> Timings<'a, 'cfg> {
-    pub fn new(bcx: &BuildContext<'a, 'cfg>, root_units: &[Unit<'_>]) -> Timings<'a, 'cfg> {
+impl<'a, 'cfg> Timings<'cfg> {
+    pub fn new(bcx: &BuildContext<'a, 'cfg>, root_units: &[Rc<Unit>]) -> Timings<'cfg> {
         let has_report = |what| {
             bcx.config
                 .cli_unstable()
@@ -145,7 +146,7 @@ impl<'a, 'cfg> Timings<'a, 'cfg> {
     }
 
     /// Mark that a unit has started running.
-    pub fn unit_start(&mut self, id: JobId, unit: Unit<'a>) {
+    pub fn unit_start(&mut self, id: JobId, unit: Rc<Unit>) {
         if !self.enabled {
             return;
         }
@@ -179,7 +180,7 @@ impl<'a, 'cfg> Timings<'a, 'cfg> {
     }
 
     /// Mark that the `.rmeta` file as generated.
-    pub fn unit_rmeta_finished(&mut self, id: JobId, unlocked: Vec<&Unit<'a>>) {
+    pub fn unit_rmeta_finished(&mut self, id: JobId, unlocked: Vec<Rc<Unit>>) {
         if !self.enabled {
             return;
         }
@@ -197,7 +198,7 @@ impl<'a, 'cfg> Timings<'a, 'cfg> {
     }
 
     /// Mark that a unit has finished running.
-    pub fn unit_finished(&mut self, id: JobId, unlocked: Vec<&Unit<'a>>) {
+    pub fn unit_finished(&mut self, id: JobId, unlocked: Vec<Rc<Unit>>) {
         if !self.enabled {
             return;
         }
@@ -225,7 +226,7 @@ impl<'a, 'cfg> Timings<'a, 'cfg> {
         if self.report_json {
             let msg = machine_message::TimingInfo {
                 package_id: unit_time.unit.pkg.package_id(),
-                target: unit_time.unit.target,
+                target: &unit_time.unit.target,
                 mode: unit_time.unit.mode,
                 duration: unit_time.duration,
                 rmeta_time: unit_time.rmeta_time,
@@ -456,11 +457,11 @@ impl<'a, 'cfg> Timings<'a, 'cfg> {
 
     fn write_js_data(&self, f: &mut impl Write) -> CargoResult<()> {
         // Create a map to link indices of unlocked units.
-        let unit_map: HashMap<Unit<'_>, usize> = self
+        let unit_map: HashMap<&Unit, usize> = self
             .unit_times
             .iter()
             .enumerate()
-            .map(|(i, ut)| (ut.unit, i))
+            .map(|(i, ut)| (&*ut.unit, i))
             .collect();
         #[derive(serde::Serialize)]
         struct UnitData {
@@ -494,12 +495,12 @@ impl<'a, 'cfg> Timings<'a, 'cfg> {
                 let unlocked_units: Vec<usize> = ut
                     .unlocked_units
                     .iter()
-                    .filter_map(|unit| unit_map.get(unit).copied())
+                    .filter_map(|unit| unit_map.get(&**unit).copied())
                     .collect();
                 let unlocked_rmeta_units: Vec<usize> = ut
                     .unlocked_rmeta_units
                     .iter()
-                    .filter_map(|unit| unit_map.get(unit).copied())
+                    .filter_map(|unit| unit_map.get(&**unit).copied())
                     .collect();
                 UnitData {
                     i,
@@ -551,7 +552,7 @@ impl<'a, 'cfg> Timings<'a, 'cfg> {
   <tbody>
 "#
         )?;
-        let mut units: Vec<&UnitTime<'_>> = self.unit_times.iter().collect();
+        let mut units: Vec<&UnitTime> = self.unit_times.iter().collect();
         units.sort_unstable_by(|a, b| b.duration.partial_cmp(&a.duration).unwrap());
         for (i, unit) in units.iter().enumerate() {
             let codegen = match unit.codegen_time() {
@@ -583,7 +584,7 @@ impl<'a, 'cfg> Timings<'a, 'cfg> {
     }
 }
 
-impl<'a> UnitTime<'a> {
+impl UnitTime {
     /// Returns the codegen time as (rmeta_time, codegen_time, percent of total)
     fn codegen_time(&self) -> Option<(f64, f64, f64)> {
         self.rmeta_time.map(|rmeta_time| {

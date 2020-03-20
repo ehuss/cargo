@@ -10,6 +10,7 @@ use cargo_platform::Cfg;
 use std::collections::hash_map::{Entry, HashMap};
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::str;
 use std::sync::{Arc, Mutex};
 
@@ -102,7 +103,7 @@ pub struct BuildDeps {
 }
 
 /// Prepares a `Work` that executes the target as a custom build script.
-pub fn prepare<'a, 'cfg>(cx: &mut Context<'a, 'cfg>, unit: &Unit<'a>) -> CargoResult<Job> {
+pub fn prepare<'a, 'cfg>(cx: &mut Context<'a, 'cfg>, unit: &Rc<Unit>) -> CargoResult<Job> {
     let _p = profile::start(format!(
         "build script prepare: {}/{}",
         unit.pkg,
@@ -147,7 +148,7 @@ fn emit_build_output(
     state.stdout(msg);
 }
 
-fn build_work<'a, 'cfg>(cx: &mut Context<'a, 'cfg>, unit: &Unit<'a>) -> CargoResult<Job> {
+fn build_work<'a, 'cfg>(cx: &mut Context<'a, 'cfg>, unit: &Rc<Unit>) -> CargoResult<Job> {
     assert!(unit.mode.is_run_custom_build());
     let bcx = &cx.bcx;
     let dependencies = cx.unit_deps(unit);
@@ -177,7 +178,7 @@ fn build_work<'a, 'cfg>(cx: &mut Context<'a, 'cfg>, unit: &Unit<'a>) -> CargoRes
     // `Profiles::get_profile_run_custom_build` so that those flags get
     // carried over.
     let to_exec = to_exec.into_os_string();
-    let mut cmd = cx.compilation.host_process(to_exec, unit.pkg)?;
+    let mut cmd = cx.compilation.host_process(to_exec, &unit.pkg)?;
     let debug = unit.profile.debuginfo.unwrap_or(0) != 0;
     cmd.env("OUT_DIR", &script_out_dir)
         .env("CARGO_MANIFEST_DIR", unit.pkg.root())
@@ -619,7 +620,7 @@ impl BuildOutput {
 
 fn prepare_metabuild<'a, 'cfg>(
     cx: &Context<'a, 'cfg>,
-    unit: &Unit<'a>,
+    unit: &Unit,
     deps: &[String],
 ) -> CargoResult<()> {
     let mut output = Vec::new();
@@ -681,7 +682,7 @@ impl BuildDeps {
 ///
 /// The given set of units to this function is the initial set of
 /// targets/profiles which are being built.
-pub fn build_map<'b, 'cfg>(cx: &mut Context<'b, 'cfg>, units: &[Unit<'b>]) -> CargoResult<()> {
+pub fn build_map<'b, 'cfg>(cx: &mut Context<'b, 'cfg>, units: &[Rc<Unit>]) -> CargoResult<()> {
     let mut ret = HashMap::new();
     for unit in units {
         build(&mut ret, cx, unit)?;
@@ -693,9 +694,9 @@ pub fn build_map<'b, 'cfg>(cx: &mut Context<'b, 'cfg>, units: &[Unit<'b>]) -> Ca
     // Recursive function to build up the map we're constructing. This function
     // memoizes all of its return values as it goes along.
     fn build<'a, 'b, 'cfg>(
-        out: &'a mut HashMap<Unit<'b>, BuildScripts>,
+        out: &'a mut HashMap<Rc<Unit>, BuildScripts>,
         cx: &mut Context<'b, 'cfg>,
-        unit: &Unit<'b>,
+        unit: &Rc<Unit>,
     ) -> CargoResult<&'a BuildScripts> {
         // Do a quick pre-flight check to see if we've already calculated the
         // set of dependencies.
@@ -722,7 +723,7 @@ pub fn build_map<'b, 'cfg>(cx: &mut Context<'b, 'cfg>, units: &[Unit<'b>]) -> Ca
         // If a package has a build script, add itself as something to inspect for linking.
         if !unit.target.is_custom_build() && unit.pkg.has_custom_build() {
             let script_meta = cx
-                .find_build_script_metadata(*unit)
+                .find_build_script_metadata(unit)
                 .expect("has_custom_build should have RunCustomBuild");
             add_to_link(&mut ret, unit.pkg.package_id(), script_meta);
         }
@@ -736,7 +737,12 @@ pub fn build_map<'b, 'cfg>(cx: &mut Context<'b, 'cfg>, units: &[Unit<'b>]) -> Ca
         // to rustc invocation caching schemes, so be sure to generate the same
         // set of build script dependency orderings via sorting the targets that
         // come out of the `Context`.
-        let mut dependencies: Vec<Unit<'_>> = cx.unit_deps(unit).iter().map(|d| d.unit).collect();
+        let mut dependencies: Vec<Rc<Unit>> = cx
+            .unit_deps(unit)
+            .iter()
+            .map(|d| Rc::clone(&d.unit))
+            .collect();
+        // TODO: This sort can maybe be removed since the UnitGraph is sorted.
         dependencies.sort_by_key(|u| u.pkg.package_id());
 
         for dep_unit in dependencies.iter() {
@@ -751,7 +757,7 @@ pub fn build_map<'b, 'cfg>(cx: &mut Context<'b, 'cfg>, units: &[Unit<'b>]) -> Ca
             }
         }
 
-        match out.entry(*unit) {
+        match out.entry(Rc::clone(unit)) {
             Entry::Vacant(entry) => Ok(entry.insert(ret)),
             Entry::Occupied(_) => panic!("cyclic dependencies in `build_map`"),
         }
@@ -767,13 +773,13 @@ pub fn build_map<'b, 'cfg>(cx: &mut Context<'b, 'cfg>, units: &[Unit<'b>]) -> Ca
 
     fn parse_previous_explicit_deps<'a, 'cfg>(
         cx: &mut Context<'a, 'cfg>,
-        unit: &Unit<'a>,
+        unit: &Rc<Unit>,
     ) -> CargoResult<()> {
         let script_run_dir = cx.files().build_script_run_dir(unit);
         let output_file = script_run_dir.join("output");
         let (prev_output, _) = prev_build_output(cx, unit);
         let deps = BuildDeps::new(&output_file, prev_output.as_ref());
-        cx.build_explicit_deps.insert(*unit, deps);
+        cx.build_explicit_deps.insert(unit.clone(), deps);
         Ok(())
     }
 }
@@ -785,7 +791,7 @@ pub fn build_map<'b, 'cfg>(cx: &mut Context<'b, 'cfg>, units: &[Unit<'b>]) -> Ca
 /// processing.
 fn prev_build_output<'a, 'cfg>(
     cx: &mut Context<'a, 'cfg>,
-    unit: &Unit<'a>,
+    unit: &Unit,
 ) -> (Option<BuildOutput>, PathBuf) {
     let script_out_dir = cx.files().build_script_out_dir(unit);
     let script_run_dir = cx.files().build_script_run_dir(unit);

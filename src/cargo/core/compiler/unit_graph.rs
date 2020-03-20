@@ -5,15 +5,16 @@ use crate::core::{nightly_features_allowed, InternedString, PackageId, Target};
 use crate::util::CargoResult;
 use std::collections::HashMap;
 use std::io::Write;
+use std::rc::Rc;
 
 /// The dependency graph of Units.
-pub type UnitGraph<'a> = HashMap<Unit<'a>, Vec<UnitDep<'a>>>;
+pub type UnitGraph = HashMap<Rc<Unit>, Vec<UnitDep>>;
 
 /// A unit dependency.
 #[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord)]
-pub struct UnitDep<'a> {
+pub struct UnitDep {
     /// The dependency unit.
-    pub unit: Unit<'a>,
+    pub unit: Rc<Unit>,
     /// The purpose of this dependency (a dependency for a test, or a build
     /// script, etc.).
     pub unit_for: UnitFor,
@@ -62,14 +63,14 @@ struct SerializedUnitDep {
 }
 
 pub fn emit_serialized_unit_graph(
-    root_units: &[Unit<'_>],
-    unit_graph: &UnitGraph<'_>,
+    root_units: &[Rc<Unit>],
+    unit_graph: &UnitGraph,
 ) -> CargoResult<()> {
     let is_nightly = nightly_features_allowed();
-    let mut units: Vec<(&Unit<'_>, &Vec<UnitDep<'_>>)> = unit_graph.iter().collect();
+    let mut units: Vec<(&Rc<Unit>, &Vec<UnitDep>)> = unit_graph.iter().collect();
     units.sort_unstable();
     // Create a map for quick lookup for dependencies.
-    let indices: HashMap<&Unit<'_>, usize> = units
+    let indices: HashMap<&Rc<Unit>, usize> = units
         .iter()
         .enumerate()
         .map(|(i, val)| (val.0, i))
@@ -97,7 +98,7 @@ pub fn emit_serialized_unit_graph(
                 .collect();
             SerializedUnit {
                 pkg_id: unit.pkg.package_id(),
-                target: unit.target,
+                target: &unit.target,
                 profile: &unit.profile,
                 platform: unit.kind,
                 mode: unit.mode,

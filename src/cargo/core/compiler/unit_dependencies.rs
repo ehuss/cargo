@@ -27,14 +27,15 @@ use crate::core::{InternedString, Package, PackageId, Target};
 use crate::CargoResult;
 use log::trace;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 /// Collection of stuff used while creating the `UnitGraph`.
 struct State<'a, 'cfg> {
     bcx: &'a BuildContext<'a, 'cfg>,
     waiting_on_download: HashSet<PackageId>,
     downloads: Downloads<'a, 'cfg>,
-    unit_dependencies: UnitGraph<'a>,
-    package_cache: HashMap<PackageId, &'a Package>,
+    unit_dependencies: UnitGraph,
+    package_cache: HashMap<PackageId, &'a Rc<Package>>,
     usr_resolve: &'a Resolve,
     usr_features: &'a ResolvedFeatures,
     std_resolve: Option<&'a Resolve>,
@@ -49,9 +50,9 @@ pub fn build_unit_dependencies<'a, 'cfg>(
     resolve: &'a Resolve,
     features: &'a ResolvedFeatures,
     std_resolve: Option<&'a (Resolve, ResolvedFeatures)>,
-    roots: &[Unit<'a>],
-    std_roots: &[Unit<'a>],
-) -> CargoResult<UnitGraph<'a>> {
+    roots: &[Rc<Unit>],
+    std_roots: &[Rc<Unit>],
+) -> CargoResult<UnitGraph> {
     let (std_resolve, std_features) = match std_resolve {
         Some((r, f)) => (Some(r), Some(f)),
         None => (None, None),
@@ -96,8 +97,8 @@ pub fn build_unit_dependencies<'a, 'cfg>(
 /// Compute all the dependencies for the standard library.
 fn calc_deps_of_std<'a, 'cfg>(
     mut state: &mut State<'a, 'cfg>,
-    std_roots: &[Unit<'a>],
-) -> CargoResult<Option<UnitGraph<'a>>> {
+    std_roots: &[Rc<Unit>],
+) -> CargoResult<Option<UnitGraph>> {
     if std_roots.is_empty() {
         return Ok(None);
     }
@@ -114,14 +115,14 @@ fn calc_deps_of_std<'a, 'cfg>(
 /// Add the standard library units to the `unit_dependencies`.
 fn attach_std_deps<'a, 'cfg>(
     state: &mut State<'a, 'cfg>,
-    std_roots: &[Unit<'a>],
-    std_unit_deps: UnitGraph<'a>,
+    std_roots: &[Rc<Unit>],
+    std_unit_deps: UnitGraph,
 ) {
     // Attach the standard library as a dependency of every target unit.
     for (unit, deps) in state.unit_dependencies.iter_mut() {
         if !unit.kind.is_host() && !unit.mode.is_run_custom_build() {
             deps.extend(std_roots.iter().map(|unit| UnitDep {
-                unit: *unit,
+                unit: Rc::clone(unit),
                 unit_for: UnitFor::new_normal(),
                 extern_crate_name: unit.pkg.name(),
                 // TODO: Does this `public` make sense?
@@ -140,7 +141,7 @@ fn attach_std_deps<'a, 'cfg>(
 
 /// Compute all the dependencies of the given root units.
 /// The result is stored in state.unit_dependencies.
-fn deps_of_roots<'a, 'cfg>(roots: &[Unit<'a>], mut state: &mut State<'a, 'cfg>) -> CargoResult<()> {
+fn deps_of_roots<'a, 'cfg>(roots: &[Rc<Unit>], mut state: &mut State<'a, 'cfg>) -> CargoResult<()> {
     // Loop because we are downloading while building the dependency graph.
     // The partially-built unit graph is discarded through each pass of the
     // loop because it is incomplete because not all required Packages have
@@ -184,7 +185,7 @@ fn deps_of_roots<'a, 'cfg>(roots: &[Unit<'a>], mut state: &mut State<'a, 'cfg>) 
 
 /// Compute the dependencies of a single unit.
 fn deps_of<'a, 'cfg>(
-    unit: &Unit<'a>,
+    unit: &Rc<Unit>,
     state: &mut State<'a, 'cfg>,
     unit_for: UnitFor,
 ) -> CargoResult<()> {
@@ -196,7 +197,9 @@ fn deps_of<'a, 'cfg>(
     // affect anything else in the hierarchy.
     if !state.unit_dependencies.contains_key(unit) {
         let unit_deps = compute_deps(unit, state, unit_for)?;
-        state.unit_dependencies.insert(*unit, unit_deps.clone());
+        state
+            .unit_dependencies
+            .insert(Rc::clone(unit), unit_deps.clone());
         for unit_dep in unit_deps {
             deps_of(&unit_dep.unit, state, unit_dep.unit_for)?;
         }
@@ -209,10 +212,10 @@ fn deps_of<'a, 'cfg>(
 /// This returns a `Vec` of `(Unit, UnitFor)` pairs. The `UnitFor`
 /// is the profile type that should be used for dependencies of the unit.
 fn compute_deps<'a, 'cfg>(
-    unit: &Unit<'a>,
+    unit: &Unit,
     state: &mut State<'a, 'cfg>,
     unit_for: UnitFor,
-) -> CargoResult<Vec<UnitDep<'a>>> {
+) -> CargoResult<Vec<UnitDep>> {
     if unit.mode.is_run_custom_build() {
         return compute_deps_custom_build(unit, unit_for, state);
     } else if unit.mode.is_doc() {
@@ -343,14 +346,14 @@ fn compute_deps<'a, 'cfg>(
                     new_unit_dep(
                         state,
                         unit,
-                        unit.pkg,
+                        &unit.pkg,
                         t,
                         UnitFor::new_normal(),
                         unit.kind.for_target(t),
                         CompileMode::Build,
                     )
                 })
-                .collect::<CargoResult<Vec<UnitDep<'a>>>>()?,
+                .collect::<CargoResult<Vec<UnitDep>>>()?,
         );
     }
 
@@ -362,10 +365,10 @@ fn compute_deps<'a, 'cfg>(
 /// The `unit` provided must represent an execution of a build script, and
 /// the returned set of units must all be run before `unit` is run.
 fn compute_deps_custom_build<'a, 'cfg>(
-    unit: &Unit<'a>,
+    unit: &Unit,
     unit_for: UnitFor,
     state: &mut State<'a, 'cfg>,
-) -> CargoResult<Vec<UnitDep<'a>>> {
+) -> CargoResult<Vec<UnitDep>> {
     if let Some(links) = unit.pkg.manifest().links() {
         if state.bcx.script_override(links, unit.kind).is_some() {
             // Overridden build scripts don't have any dependencies.
@@ -388,8 +391,8 @@ fn compute_deps_custom_build<'a, 'cfg>(
     let unit_dep = new_unit_dep(
         state,
         unit,
-        unit.pkg,
-        unit.target,
+        &unit.pkg,
+        &unit.target,
         script_unit_for,
         // Build scripts always compiled for the host.
         CompileKind::Host,
@@ -400,9 +403,9 @@ fn compute_deps_custom_build<'a, 'cfg>(
 
 /// Returns the dependencies necessary to document a package.
 fn compute_deps_doc<'a, 'cfg>(
-    unit: &Unit<'a>,
+    unit: &Unit,
     state: &mut State<'a, 'cfg>,
-) -> CargoResult<Vec<UnitDep<'a>>> {
+) -> CargoResult<Vec<UnitDep>> {
     let bcx = state.bcx;
     let deps = state
         .resolve()
@@ -469,10 +472,10 @@ fn compute_deps_doc<'a, 'cfg>(
 }
 
 fn maybe_lib<'a>(
-    unit: &Unit<'a>,
+    unit: &Unit,
     state: &mut State<'a, '_>,
     unit_for: UnitFor,
-) -> CargoResult<Option<UnitDep<'a>>> {
+) -> CargoResult<Option<UnitDep>> {
     unit.pkg
         .targets()
         .iter()
@@ -482,7 +485,7 @@ fn maybe_lib<'a>(
             new_unit_dep(
                 state,
                 unit,
-                unit.pkg,
+                &unit.pkg,
                 t,
                 unit_for,
                 unit.kind.for_target(t),
@@ -500,10 +503,10 @@ fn maybe_lib<'a>(
 /// of work is still returned. `None` is only returned if the package has no
 /// build script.
 fn dep_build_script<'a>(
-    unit: &Unit<'a>,
+    unit: &Unit,
     unit_for: UnitFor,
     state: &State<'a, '_>,
-) -> CargoResult<Option<UnitDep<'a>>> {
+) -> CargoResult<Option<UnitDep>> {
     unit.pkg
         .targets()
         .iter()
@@ -544,7 +547,7 @@ fn dep_build_script<'a>(
             new_unit_dep_with_profile(
                 state,
                 unit,
-                unit.pkg,
+                &unit.pkg,
                 t,
                 script_unit_for,
                 unit.kind,
@@ -576,13 +579,13 @@ fn check_or_build_mode(mode: CompileMode, target: &Target) -> CompileMode {
 /// Create a new Unit for a dependency from `parent` to `pkg` and `target`.
 fn new_unit_dep<'a>(
     state: &State<'a, '_>,
-    parent: &Unit<'a>,
-    pkg: &'a Package,
-    target: &'a Target,
+    parent: &Unit,
+    pkg: &Rc<Package>,
+    target: &Rc<Target>,
     unit_for: UnitFor,
     kind: CompileKind,
     mode: CompileMode,
-) -> CargoResult<UnitDep<'a>> {
+) -> CargoResult<UnitDep> {
     let profile = state.bcx.profiles.get_profile(
         pkg.package_id(),
         state.bcx.ws.is_member(pkg),
@@ -594,14 +597,14 @@ fn new_unit_dep<'a>(
 
 fn new_unit_dep_with_profile<'a>(
     state: &State<'a, '_>,
-    parent: &Unit<'a>,
-    pkg: &'a Package,
-    target: &'a Target,
+    parent: &Unit,
+    pkg: &Rc<Package>,
+    target: &Rc<Target>,
     unit_for: UnitFor,
     kind: CompileKind,
     mode: CompileMode,
     profile: Profile,
-) -> CargoResult<UnitDep<'a>> {
+) -> CargoResult<UnitDep> {
     // TODO: consider making extern_crate_name return InternedString?
     let extern_crate_name = InternedString::new(&state.resolve().extern_crate_name(
         parent.pkg.package_id(),
@@ -613,10 +616,15 @@ fn new_unit_dep_with_profile<'a>(
         .is_public_dep(parent.pkg.package_id(), pkg.package_id());
     let features_for = unit_for.map_to_features_for();
     let features = state.activated_features(pkg.package_id(), features_for);
-    let unit = state
-        .bcx
-        .units
-        .intern(pkg, target, profile, kind, mode, features, state.is_std);
+    let unit = Rc::new(Unit {
+        pkg: Rc::clone(pkg),
+        target: Rc::clone(target),
+        profile,
+        kind,
+        mode,
+        features,
+        is_std: state.is_std,
+    });
     Ok(UnitDep {
         unit,
         unit_for,
@@ -636,7 +644,7 @@ fn new_unit_dep_with_profile<'a>(
 ///
 /// Here we take the entire `deps` map and add more dependencies from execution
 /// of one build script to execution of another build script.
-fn connect_run_custom_build_deps(unit_dependencies: &mut UnitGraph<'_>) {
+fn connect_run_custom_build_deps(unit_dependencies: &mut UnitGraph) {
     let mut new_deps = Vec::new();
 
     {
@@ -650,7 +658,7 @@ fn connect_run_custom_build_deps(unit_dependencies: &mut UnitGraph<'_>) {
             for dep in deps {
                 if dep.unit.mode == CompileMode::RunCustomBuild {
                     reverse_deps_map
-                        .entry(dep.unit)
+                        .entry(Rc::clone(&dep.unit))
                         .or_insert_with(HashSet::new)
                         .insert(unit);
                 }
@@ -679,7 +687,7 @@ fn connect_run_custom_build_deps(unit_dependencies: &mut UnitGraph<'_>) {
             let to_add = reverse_deps
                 .iter()
                 // Get all deps for lib.
-                .flat_map(|reverse_dep| unit_dependencies[reverse_dep].iter())
+                .flat_map(|reverse_dep| unit_dependencies[*reverse_dep].iter())
                 // Only deps with `links`.
                 .filter(|other| {
                     other.unit.pkg != unit.pkg
@@ -697,7 +705,7 @@ fn connect_run_custom_build_deps(unit_dependencies: &mut UnitGraph<'_>) {
 
             if !to_add.is_empty() {
                 // (RunCustomBuild, set(other RunCustomBuild))
-                new_deps.push((*unit, to_add));
+                new_deps.push((Rc::clone(unit), to_add));
             }
         }
     }
@@ -730,7 +738,7 @@ impl<'a, 'cfg> State<'a, 'cfg> {
         features.activated_features(pkg_id, features_for)
     }
 
-    fn get(&mut self, id: PackageId) -> CargoResult<Option<&'a Package>> {
+    fn get(&mut self, id: PackageId) -> CargoResult<Option<&'a Rc<Package>>> {
         if let Some(pkg) = self.package_cache.get(&id) {
             return Ok(Some(pkg));
         }

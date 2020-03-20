@@ -1,4 +1,3 @@
-use crate::core::compiler::unit::UnitInterner;
 use crate::core::compiler::{BuildConfig, BuildOutput, CompileKind, Unit};
 use crate::core::profiles::Profiles;
 use crate::core::{InternedString, Workspace};
@@ -8,6 +7,7 @@ use crate::util::errors::CargoResult;
 use crate::util::Rustc;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::str;
 
 mod target_info;
@@ -27,12 +27,9 @@ pub struct BuildContext<'a, 'cfg> {
     pub profiles: Profiles,
     pub build_config: &'a BuildConfig,
     /// Extra compiler args for either `rustc` or `rustdoc`.
-    pub extra_compiler_args: HashMap<Unit<'a>, Vec<String>>,
+    pub extra_compiler_args: HashMap<Rc<Unit>, Vec<String>>,
     /// Package downloader.
     pub packages: &'a PackageSet<'cfg>,
-
-    /// Source of interning new units as they're created.
-    pub units: &'a UnitInterner<'a>,
 
     /// Information about rustc and the target platform.
     pub target_data: RustcTargetData,
@@ -45,8 +42,7 @@ impl<'a, 'cfg> BuildContext<'a, 'cfg> {
         config: &'cfg Config,
         build_config: &'a BuildConfig,
         profiles: Profiles,
-        units: &'a UnitInterner<'a>,
-        extra_compiler_args: HashMap<Unit<'a>, Vec<String>>,
+        extra_compiler_args: HashMap<Rc<Unit>, Vec<String>>,
         target_data: RustcTargetData,
     ) -> CargoResult<BuildContext<'a, 'cfg>> {
         Ok(BuildContext {
@@ -56,7 +52,6 @@ impl<'a, 'cfg> BuildContext<'a, 'cfg> {
             build_config,
             profiles,
             extra_compiler_args,
-            units,
             target_data,
         })
     }
@@ -89,11 +84,11 @@ impl<'a, 'cfg> BuildContext<'a, 'cfg> {
         self.build_config.jobs
     }
 
-    pub fn rustflags_args(&self, unit: &Unit<'_>) -> &[String] {
+    pub fn rustflags_args(&self, unit: &Unit) -> &[String] {
         &self.target_data.info(unit.kind).rustflags
     }
 
-    pub fn rustdocflags_args(&self, unit: &Unit<'_>) -> &[String] {
+    pub fn rustdocflags_args(&self, unit: &Unit) -> &[String] {
         &self.target_data.info(unit.kind).rustdocflags
     }
 
@@ -101,7 +96,7 @@ impl<'a, 'cfg> BuildContext<'a, 'cfg> {
         pkg.source_id().is_path() || self.config.extra_verbose()
     }
 
-    pub fn extra_args_for(&self, unit: &Unit<'a>) -> Option<&Vec<String>> {
+    pub fn extra_args_for(&self, unit: &Unit) -> Option<&Vec<String>> {
         self.extra_compiler_args.get(unit)
     }
 

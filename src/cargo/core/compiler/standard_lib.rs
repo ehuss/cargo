@@ -10,6 +10,7 @@ use crate::util::errors::CargoResult;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 /// Parse the `-Zbuild-std` flag.
 pub fn parse_unstable_flag(value: Option<&str>) -> Vec<String> {
@@ -126,7 +127,7 @@ pub fn generate_std_roots<'a>(
     std_resolve: &'a Resolve,
     std_features: &ResolvedFeatures,
     kind: CompileKind,
-) -> CargoResult<Vec<Unit<'a>>> {
+) -> CargoResult<Vec<Rc<Unit>>> {
     // Generate the root Units for the standard library.
     let std_ids = crates
         .iter()
@@ -156,9 +157,16 @@ pub fn generate_std_roots<'a>(
             );
             let features =
                 std_features.activated_features(pkg.package_id(), FeaturesFor::NormalOrDev);
-            Ok(bcx.units.intern(
-                pkg, lib, profile, kind, mode, features, /*is_std*/ true,
-            ))
+            let unit = Unit {
+                pkg: Rc::clone(pkg),
+                target: Rc::clone(lib),
+                profile,
+                kind,
+                mode,
+                features,
+                is_std: true,
+            };
+            Ok(Rc::new(unit))
         })
         .collect::<CargoResult<Vec<_>>>()
 }

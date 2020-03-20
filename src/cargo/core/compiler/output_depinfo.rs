@@ -26,6 +26,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use log::debug;
 
@@ -48,13 +49,13 @@ fn render_filename<P: AsRef<Path>>(path: P, basedir: Option<&str>) -> CargoResul
         .map(|f| f.replace(" ", "\\ "))
 }
 
-fn add_deps_for_unit<'a, 'b>(
+fn add_deps_for_unit<'a, 'cfg>(
     deps: &mut BTreeSet<PathBuf>,
-    cx: &mut Context<'a, 'b>,
-    unit: &Unit<'a>,
-    visited: &mut HashSet<Unit<'a>>,
+    cx: &mut Context<'a, 'cfg>,
+    unit: &Rc<Unit>,
+    visited: &mut HashSet<Rc<Unit>>,
 ) -> CargoResult<()> {
-    if !visited.insert(*unit) {
+    if !visited.insert(Rc::clone(unit)) {
         return Ok(());
     }
 
@@ -80,7 +81,7 @@ fn add_deps_for_unit<'a, 'b>(
     }
 
     // Add rerun-if-changed dependencies
-    if let Some(metadata) = cx.find_build_script_metadata(*unit) {
+    if let Some(metadata) = cx.find_build_script_metadata(unit) {
         if let Some(output) = cx
             .build_script_outputs
             .lock()
@@ -107,7 +108,7 @@ fn add_deps_for_unit<'a, 'b>(
 /// Save a `.d` dep-info file for the given unit.
 ///
 /// This only saves files for uplifted artifacts.
-pub fn output_depinfo<'a, 'b>(cx: &mut Context<'a, 'b>, unit: &Unit<'a>) -> CargoResult<()> {
+pub fn output_depinfo<'a, 'cfg>(cx: &mut Context<'a, 'cfg>, unit: &Rc<Unit>) -> CargoResult<()> {
     let bcx = cx.bcx;
     let mut deps = BTreeSet::new();
     let mut visited = HashSet::new();

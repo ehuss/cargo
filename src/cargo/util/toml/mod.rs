@@ -1238,6 +1238,7 @@ impl TomlManifest {
         }
 
         let custom_metadata = project.metadata.clone();
+        let targets = targets.into_iter().map(Rc::new).collect();
         let mut manifest = Manifest::new(
             summary,
             targets,

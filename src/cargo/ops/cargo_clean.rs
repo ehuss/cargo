@@ -2,10 +2,11 @@ use crate::core::InternedString;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::rc::Rc;
 
 use crate::core::compiler::unit_dependencies;
 use crate::core::compiler::{BuildConfig, BuildContext, CompileKind, CompileMode, Context};
-use crate::core::compiler::{RustcTargetData, UnitInterner};
+use crate::core::compiler::{RustcTargetData, Unit};
 use crate::core::profiles::{Profiles, UnitFor};
 use crate::core::resolver::features::{FeatureResolver, HasDevUnits, RequestedFeatures};
 use crate::core::{PackageIdSpec, Workspace};
@@ -59,7 +60,6 @@ pub fn clean(ws: &Workspace<'_>, opts: &CleanOptions<'_>) -> CargoResult<()> {
     }
     let (packages, resolve) = ops::resolve_ws(ws)?;
 
-    let interner = UnitInterner::new();
     let mut build_config = BuildConfig::new(config, Some(1), &opts.target, CompileMode::Build)?;
     build_config.requested_profile = opts.requested_profile;
     let target_data = RustcTargetData::new(ws, build_config.requested_kind)?;
@@ -69,7 +69,6 @@ pub fn clean(ws: &Workspace<'_>, opts: &CleanOptions<'_>) -> CargoResult<()> {
         opts.config,
         &build_config,
         profiles,
-        &interner,
         HashMap::new(),
         target_data,
     )?;
@@ -121,9 +120,16 @@ pub fn clean(ws: &Workspace<'_>, opts: &CleanOptions<'_>) -> CargoResult<()> {
                         let features_for = unit_for.map_to_features_for();
                         let features =
                             features.activated_features_unverified(pkg.package_id(), features_for);
-                        units.push(bcx.units.intern(
-                            pkg, target, profile, *kind, *mode, features, /*is_std*/ false,
-                        ));
+                        let unit = Unit {
+                            pkg: Rc::clone(pkg),
+                            target: Rc::clone(target),
+                            profile,
+                            kind: *kind,
+                            mode: *mode,
+                            features,
+                            is_std: false,
+                        };
+                        units.push(Rc::new(unit));
                     }
                 }
             }

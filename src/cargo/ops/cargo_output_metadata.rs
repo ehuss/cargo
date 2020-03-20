@@ -133,7 +133,7 @@ fn build_resolve_graph(
         .pkg_set
         .get_many(ws_resolve.pkg_set.package_ids())?
         .into_iter()
-        .map(|pkg| (pkg.package_id(), pkg.clone()))
+        .map(|pkg| (pkg.package_id(), (**pkg).clone())) // TODO: explain clone
         .collect();
 
     // Start from the workspace roots, and recurse through filling out the

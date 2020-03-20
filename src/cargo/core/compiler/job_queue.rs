@@ -54,6 +54,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::marker;
 use std::mem;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -81,10 +82,10 @@ use crate::util::{Progress, ProgressStyle};
 /// queueing of compilation steps for each package. Packages enqueue units of
 /// work and then later on the entire graph is converted to DrainState and
 /// executed.
-pub struct JobQueue<'a, 'cfg> {
-    queue: DependencyQueue<Unit<'a>, Artifact, Job>,
+pub struct JobQueue<'cfg> {
+    queue: DependencyQueue<Rc<Unit>, Artifact, Job>,
     counts: HashMap<PackageId, usize>,
-    timings: Timings<'a, 'cfg>,
+    timings: Timings<'cfg>,
 }
 
 /// This structure is backed by the `DependencyQueue` type and manages the
@@ -115,19 +116,19 @@ pub struct JobQueue<'a, 'cfg> {
 /// error, the drop will deadlock. This should be fixed at some point in the
 /// future. The jobserver thread has a similar problem, though it will time
 /// out after 1 second.
-struct DrainState<'a, 'cfg> {
+struct DrainState<'cfg> {
     // This is the length of the DependencyQueue when starting out
     total_units: usize,
 
-    queue: DependencyQueue<Unit<'a>, Artifact, Job>,
+    queue: DependencyQueue<Rc<Unit>, Artifact, Job>,
     messages: Arc<Queue<Message>>,
-    active: HashMap<JobId, Unit<'a>>,
+    active: HashMap<JobId, Rc<Unit>>,
     compiled: HashSet<PackageId>,
     documented: HashSet<PackageId>,
     counts: HashMap<PackageId, usize>,
     progress: Progress<'cfg>,
     next_id: u32,
-    timings: Timings<'a, 'cfg>,
+    timings: Timings<'cfg>,
 
     /// Tokens that are currently owned by this Cargo, and may be "associated"
     /// with a rustc process. They may also be unused, though if so will be
@@ -148,7 +149,7 @@ struct DrainState<'a, 'cfg> {
     /// The list of jobs that we have not yet started executing, but have
     /// retrieved from the `queue`. We eagerly pull jobs off the main queue to
     /// allow us to request jobserver tokens pretty early.
-    pending_queue: Vec<(Unit<'a>, Job)>,
+    pending_queue: Vec<(Rc<Unit>, Job)>,
     print: DiagnosticPrinter<'cfg>,
 
     // How many jobs we've finished
@@ -269,8 +270,8 @@ impl<'a> JobState<'a> {
     }
 }
 
-impl<'a, 'cfg> JobQueue<'a, 'cfg> {
-    pub fn new(bcx: &BuildContext<'a, 'cfg>, root_units: &[Unit<'a>]) -> JobQueue<'a, 'cfg> {
+impl<'cfg> JobQueue<'cfg> {
+    pub fn new(bcx: &BuildContext<'_, 'cfg>, root_units: &[Rc<Unit>]) -> JobQueue<'cfg> {
         JobQueue {
             queue: DependencyQueue::new(),
             counts: HashMap::new(),
@@ -280,8 +281,8 @@ impl<'a, 'cfg> JobQueue<'a, 'cfg> {
 
     pub fn enqueue(
         &mut self,
-        cx: &Context<'a, 'cfg>,
-        unit: &Unit<'a>,
+        cx: &Context<'_, 'cfg>,
+        unit: &Rc<Unit>,
         job: Job,
     ) -> CargoResult<()> {
         let dependencies = cx.unit_deps(unit);
@@ -302,7 +303,7 @@ impl<'a, 'cfg> JobQueue<'a, 'cfg> {
                 } else {
                     Artifact::All
                 };
-                (dep.unit, artifact)
+                (Rc::clone(&dep.unit), artifact)
             })
             .collect::<HashMap<_, _>>();
 
@@ -329,23 +330,23 @@ impl<'a, 'cfg> JobQueue<'a, 'cfg> {
         // transitively contains the `Metadata` edge.
         if unit.requires_upstream_objects() {
             for dep in dependencies {
-                depend_on_deps_of_deps(cx, &mut queue_deps, dep.unit);
+                depend_on_deps_of_deps(cx, &mut queue_deps, &dep.unit);
             }
 
             fn depend_on_deps_of_deps<'a>(
-                cx: &Context<'a, '_>,
-                deps: &mut HashMap<Unit<'a>, Artifact>,
-                unit: Unit<'a>,
+                cx: &'a Context<'a, '_>,
+                deps: &mut HashMap<Rc<Unit>, Artifact>,
+                unit: &Unit,
             ) {
                 for dep in cx.unit_deps(&unit) {
-                    if deps.insert(dep.unit, Artifact::All).is_none() {
-                        depend_on_deps_of_deps(cx, deps, dep.unit);
+                    if deps.insert(Rc::clone(&dep.unit), Artifact::All).is_none() {
+                        depend_on_deps_of_deps(cx, deps, &dep.unit);
                     }
                 }
             }
         }
 
-        self.queue.queue(*unit, job, queue_deps);
+        self.queue.queue(Rc::clone(unit), job, queue_deps);
         *self.counts.entry(unit.pkg.package_id()).or_insert(0) += 1;
         Ok(())
     }
@@ -355,7 +356,7 @@ impl<'a, 'cfg> JobQueue<'a, 'cfg> {
     /// This function will spawn off `config.jobs()` workers to build all of the
     /// necessary dependencies, in order. Freshness is propagated as far as
     /// possible along each dependency chain.
-    pub fn execute(mut self, cx: &mut Context<'a, '_>, plan: &mut BuildPlan) -> CargoResult<()> {
+    pub fn execute(mut self, cx: &mut Context<'_, '_>, plan: &mut BuildPlan) -> CargoResult<()> {
         let _p = profile::start("executing the job graph");
         self.queue.queue_finished();
 
@@ -412,7 +413,7 @@ impl<'a, 'cfg> JobQueue<'a, 'cfg> {
     }
 }
 
-impl<'a, 'cfg> DrainState<'a, 'cfg> {
+impl<'a, 'cfg> DrainState<'cfg> {
     fn spawn_work_if_possible(
         &mut self,
         cx: &mut Context<'a, '_>,
@@ -500,7 +501,7 @@ impl<'a, 'cfg> DrainState<'a, 'cfg> {
                     .config
                     .shell()
                     .verbose(|c| c.status("Running", &cmd))?;
-                self.timings.unit_start(id, self.active[&id]);
+                self.timings.unit_start(id, Rc::clone(&self.active[&id]));
             }
             Message::BuildPlanMsg(module_name, cmd, filenames) => {
                 plan.update(&module_name, &cmd, &filenames)?;
@@ -542,7 +543,7 @@ impl<'a, 'cfg> DrainState<'a, 'cfg> {
                     // in there as we'll get another `Finish` later on.
                     Artifact::Metadata => {
                         info!("end (meta): {:?}", id);
-                        self.active[&id]
+                        Rc::clone(&self.active[&id])
                     }
                 };
                 info!("end ({:?}): {:?}", unit, result);
@@ -746,7 +747,7 @@ impl<'a, 'cfg> DrainState<'a, 'cfg> {
         ));
     }
 
-    fn name_for_progress(&self, unit: &Unit<'_>) -> String {
+    fn name_for_progress(&self, unit: &Unit) -> String {
         let pkg_name = unit.pkg.name();
         match unit.mode {
             CompileMode::Doc { .. } => format!("{}(doc)", pkg_name),
@@ -768,7 +769,7 @@ impl<'a, 'cfg> DrainState<'a, 'cfg> {
     /// Executes a job, pushing the spawned thread's handled onto `threads`.
     fn run(
         &mut self,
-        unit: &Unit<'a>,
+        unit: &Rc<Unit>,
         job: Job,
         cx: &Context<'a, '_>,
         scope: &Scope<'_>,
@@ -778,7 +779,7 @@ impl<'a, 'cfg> DrainState<'a, 'cfg> {
 
         info!("start {}: {:?}", id, unit);
 
-        assert!(self.active.insert(id, *unit).is_none());
+        assert!(self.active.insert(id, Rc::clone(unit)).is_none());
         *self.counts.get_mut(&unit.pkg.package_id()).unwrap() -= 1;
 
         let messages = self.messages.clone();
@@ -852,11 +853,11 @@ impl<'a, 'cfg> DrainState<'a, 'cfg> {
     fn emit_warnings(
         &mut self,
         msg: Option<&str>,
-        unit: &Unit<'a>,
+        unit: &Unit,
         cx: &mut Context<'a, '_>,
     ) -> CargoResult<()> {
         let outputs = cx.build_script_outputs.lock().unwrap();
-        let metadata = match cx.find_build_script_metadata(*unit) {
+        let metadata = match cx.find_build_script_metadata(unit) {
             Some(metadata) => metadata,
             None => return Ok(()),
         };
@@ -884,14 +885,19 @@ impl<'a, 'cfg> DrainState<'a, 'cfg> {
     fn finish(
         &mut self,
         id: JobId,
-        unit: &Unit<'a>,
+        unit: &Rc<Unit>,
         artifact: Artifact,
         cx: &mut Context<'a, '_>,
     ) -> CargoResult<()> {
         if unit.mode.is_run_custom_build() && cx.bcx.show_warnings(unit.pkg.package_id()) {
             self.emit_warnings(None, unit, cx)?;
         }
-        let unlocked = self.queue.finish(unit, &artifact);
+        let unlocked = self
+            .queue
+            .finish(unit, &artifact)
+            .into_iter()
+            .map(|unit| Rc::clone(unit))
+            .collect();
         match artifact {
             Artifact::All => self.timings.unit_finished(id, unlocked),
             Artifact::Metadata => self.timings.unit_rmeta_finished(id, unlocked),
@@ -911,7 +917,7 @@ impl<'a, 'cfg> DrainState<'a, 'cfg> {
     fn note_working_on(
         &mut self,
         config: &Config,
-        unit: &Unit<'a>,
+        unit: &Unit,
         fresh: Freshness,
     ) -> CargoResult<()> {
         if (self.compiled.contains(&unit.pkg.package_id()) && !unit.mode.is_doc())
@@ -926,15 +932,15 @@ impl<'a, 'cfg> DrainState<'a, 'cfg> {
             Dirty => {
                 if unit.mode.is_doc() {
                     self.documented.insert(unit.pkg.package_id());
-                    config.shell().status("Documenting", unit.pkg)?;
+                    config.shell().status("Documenting", &*unit.pkg)?;
                 } else if unit.mode.is_doc_test() {
                     // Skip doc test.
                 } else {
                     self.compiled.insert(unit.pkg.package_id());
                     if unit.mode.is_check() {
-                        config.shell().status("Checking", unit.pkg)?;
+                        config.shell().status("Checking", &unit.pkg)?;
                     } else {
-                        config.shell().status("Compiling", unit.pkg)?;
+                        config.shell().status("Compiling", &unit.pkg)?;
                     }
                 }
             }
@@ -944,7 +950,7 @@ impl<'a, 'cfg> DrainState<'a, 'cfg> {
                     && !(unit.mode.is_doc_test() && self.compiled.contains(&unit.pkg.package_id()))
                 {
                     self.compiled.insert(unit.pkg.package_id());
-                    config.shell().verbose(|c| c.status("Fresh", unit.pkg))?;
+                    config.shell().verbose(|c| c.status("Fresh", &unit.pkg))?;
                 }
             }
         }
