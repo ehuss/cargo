@@ -82,6 +82,9 @@ pub fn run(
     let mut process = compile.target_process(exe, pkg)?;
     process.args(args).cwd(config.cwd());
 
+    eprintln!("{:?}", process);
+    process.display_env_vars();
+    eprintln!("{}", process);
     config.shell().status("Running", process.to_string())?;
 
     let result = process.exec_replace();

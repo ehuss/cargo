@@ -1748,7 +1748,19 @@ fn feature_off_dylib() {
     // Build the dylib with `f1` feature.
     p.cargo("build -vv --features f1").run();
     // Check that building without `f1` uses a dylib without `f1`.
-    p.cargo("run -vv -p bar").run();
+    list(&p.build_dir());
+    eprintln!("build bar");
+    p.cargo("build -vv -p bar").stream().run();
+    list(&p.build_dir());
+    p.cargo("run -vv -p bar").stream().run();
+
+    fn list(path: &std::path::Path) {
+        for entry in walkdir::WalkDir::new(path) {
+            let entry = entry.unwrap();
+            let metadata = std::fs::metadata(entry.path()).unwrap();
+            eprintln!("{:?}: {:?}", entry.path(), metadata.modified().unwrap());
+        }
+    }
 }
 
 #[cargo_test]

@@ -871,9 +871,9 @@ impl Execs {
     fn match_process(&self, process: &ProcessBuilder) -> MatchResult {
         println!("running {}", process);
         let res = if self.stream_output {
-            if is_ci() {
-                panic!("`.stream()` is for local debugging")
-            }
+            // if is_ci() {
+            //     panic!("`.stream()` is for local debugging")
+            // }
             process.exec_with_streaming(
                 &mut |out| {
                     println!("{}", out);
