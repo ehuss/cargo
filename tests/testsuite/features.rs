@@ -1746,9 +1746,9 @@ fn feature_off_dylib() {
         .build();
 
     // Build the dylib with `f1` feature.
-    p.cargo("build --features f1").run();
+    p.cargo("build -vv --features f1").run();
     // Check that building without `f1` uses a dylib without `f1`.
-    p.cargo("run -p bar").run();
+    p.cargo("run -vv -p bar").run();
 }
 
 #[cargo_test]

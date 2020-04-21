@@ -23,7 +23,7 @@ steps:
 # looks like the OSX version we're actually running on is such that a symbol is
 # emitted that's never worked. For now force the system library to be used to
 # fix the link errors.
-- bash: cargo test --features 'deny-warnings curl/force-system-lib-on-osx'
+- bash: cargo test --test testsuite --features 'deny-warnings curl/force-system-lib-on-osx' -- feature_off_dylib
   displayName: "cargo test --test testsuite -- feature_off_dylib"
 
 # - bash: cargo test -p cargo-test-support
