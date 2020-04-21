@@ -24,10 +24,10 @@ steps:
 # emitted that's never worked. For now force the system library to be used to
 # fix the link errors.
 - bash: cargo test --features 'deny-warnings curl/force-system-lib-on-osx'
-  displayName: "cargo test"
+  displayName: "cargo test --test testsuite -- feature_off_dylib"
 
-- bash: cargo test -p cargo-test-support
-  displayName: "cargo test -p cargo-test-support"
+# - bash: cargo test -p cargo-test-support
+#   displayName: "cargo test -p cargo-test-support"
 
-- bash: cargo test -p cargo-platform
-  displayName: "cargo test -p cargo-platform"
+# - bash: cargo test -p cargo-platform
+#   displayName: "cargo test -p cargo-platform"
