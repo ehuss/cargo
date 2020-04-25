@@ -266,10 +266,15 @@ fn compute_deps(
             None => continue,
         };
         let mode = check_or_build_mode(unit.mode, lib);
+        // If this is a dependency for a custom build script, then it should
+        // use host features. The `unit_for` check here is only for `cargo
+        // clean` which passes in bogus combinations (like "test" build.rs
+        // where `unit_for.host` is false). Who knows, maybe someday we'll
+        // have build-script tests.
+        let is_custom_build_host_features = unit.target.is_custom_build() && unit_for.is_for_host();
         let dep_unit_for = unit_for
             .with_for_host(lib.for_host())
-            // If it is a custom build script, then it *only* has build dependencies.
-            .with_host_features(unit.target.is_custom_build() || lib.proc_macro());
+            .with_host_features(is_custom_build_host_features || lib.proc_macro());
 
         if state.config.cli_unstable().dual_proc_macros && lib.proc_macro() && !unit.kind.is_host()
         {
