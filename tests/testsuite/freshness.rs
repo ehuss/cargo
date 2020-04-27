@@ -2318,8 +2318,12 @@ fn linking_interrupted() {
 
     // This is used to detect when linking starts, then to pause the linker so
     // that the test can kill cargo.
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
+    let link_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let link_addr = link_listener.local_addr().unwrap();
+
+    // This is used to detect when rustc exits.
+    let rustc_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let rustc_addr = rustc_listener.local_addr().unwrap();
 
     // Create a linker that we can interrupt.
     let linker = project()
@@ -2349,13 +2353,40 @@ fn linking_interrupted() {
                 // Tell the test that we are ready to be interrupted.
                 let mut socket = std::net::TcpStream::connect("__ADDR__").unwrap();
                 // Wait for the test to tell us to exit.
-                let _ = socket.read(&mut [0; 1]);
+                drop(socket.read(&mut [0; 1]));
             }
             "#
-            .replace("__ADDR__", &addr.to_string()),
+            .replace("__ADDR__", &link_addr.to_string()),
         )
         .build();
     linker.cargo("build").run();
+
+    // Create a wrapper around rustc that will tell us when rustc is finished.
+    let rustc = project()
+        .at("rustc-waiter")
+        .file("Cargo.toml", &basic_manifest("rustc-waiter", "1.0.0"))
+        .file(
+            "src/main.rs",
+            &r#"
+            fn main() {
+                let mut conn = None;
+                // Check for a normal build (not -vV or --print).
+                if std::env::args().any(|arg| arg == "t1") {
+                    // Tell the test that rustc has started.
+                    conn = Some(std::net::TcpStream::connect("__ADDR__").unwrap());
+                }
+                let args: Vec<_> = std::env::args().collect();
+                let status = std::process::Command::new("rustc")
+                    .args(std::env::args().skip(1))
+                    .status()
+                    .expect("rustc to run");
+                std::process::exit(status.code().unwrap_or(1));
+            }
+            "#
+            .replace("__ADDR__", &rustc_addr.to_string()),
+        )
+        .build();
+    rustc.cargo("build").run();
 
     // Build it once so that the fingerprint gets saved to disk.
     let p = project()
@@ -2363,25 +2394,29 @@ fn linking_interrupted() {
         .file("tests/t1.rs", "")
         .build();
     p.cargo("test --test t1 --no-run").run();
+
     // Make a change, start a build, then interrupt it.
     p.change_file("src/lib.rs", "// modified");
     let linker_env = format!(
         "CARGO_TARGET_{}_LINKER",
         rustc_host().to_uppercase().replace('-', "_")
     );
-    // NOTE: This assumes that the path to the linker is not in the
-    // fingerprint. But maybe it should be?
+    // NOTE: This assumes that the paths to the linker or rustc are not in the
+    // fingerprint. But maybe they should be?
     let mut cmd = p
         .cargo("test --test t1 --no-run")
         .env(&linker_env, linker.bin("linker"))
+        .env("RUSTC", rustc.bin("rustc-waiter"))
         .build_command();
     let mut child = cmd
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    // Wait for rustc to start.
+    let mut rustc_conn = rustc_listener.accept().unwrap().0;
     // Wait for linking to start.
-    let mut conn = listener.accept().unwrap().0;
+    let mut linker_conn = link_listener.accept().unwrap().0;
 
     // Interrupt the child.
     child.kill().unwrap();
@@ -2393,13 +2428,13 @@ fn linking_interrupted() {
     // killed. This write will tell them to exit, pretending that they died
     // before finishing. Ignore the error, because (sometimes?) on Windows
     // everything is already killed.
-    let _ = conn.write(b"X");
-    // Sleep a bit to allow rustc to clean up and exit. I have seen some race
+    drop(linker_conn.write_all(b"X"));
+    // Wait for rustc to exit. If we don't wait, then the command below could
+    // start while rustc was still cleaning up. I have seen some race
     // conditions on macOS where clang dies with `no such
-    // file...t1-HASH.rcgu.o`. I think what is happening is that the old rustc
-    // process is still running, and deletes the `*.o` files while the command
-    // below is trying to write them. Not sure if that is macOS-specific.
-    std::thread::sleep(std::time::Duration::new(2, 0));
+    // file...t1-HASH.rcgu.o`.
+    let mut buf = [0];
+    drop(rustc_conn.read_exact(&mut buf));
 
     // Build again, shouldn't be fresh.
     p.cargo("test --test t1")
