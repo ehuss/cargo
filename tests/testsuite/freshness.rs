@@ -13,6 +13,7 @@ use std::time::SystemTime;
 use cargo_test_support::paths::{self, CargoPathExt};
 use cargo_test_support::registry::Package;
 use cargo_test_support::{basic_manifest, is_coarse_mtime, project, rustc_host, sleep_ms};
+use super::death;
 
 #[cargo_test]
 fn modifying_and_moving() {
@@ -2312,9 +2313,413 @@ LLVM version: 9.0
     assert_eq!(check("nightly1", true), nightly1_name);
 }
 
+#[test] fn linking_interrupted0() { linking_interrupted(); }
+#[test] fn linking_interrupted1() { linking_interrupted(); }
+#[test] fn linking_interrupted2() { linking_interrupted(); }
+#[test] fn linking_interrupted3() { linking_interrupted(); }
+#[test] fn linking_interrupted4() { linking_interrupted(); }
+#[test] fn linking_interrupted5() { linking_interrupted(); }
+#[test] fn linking_interrupted6() { linking_interrupted(); }
+#[test] fn linking_interrupted7() { linking_interrupted(); }
+#[test] fn linking_interrupted8() { linking_interrupted(); }
+#[test] fn linking_interrupted9() { linking_interrupted(); }
+#[test] fn linking_interrupted10() { linking_interrupted(); }
+#[test] fn linking_interrupted11() { linking_interrupted(); }
+#[test] fn linking_interrupted12() { linking_interrupted(); }
+#[test] fn linking_interrupted13() { linking_interrupted(); }
+#[test] fn linking_interrupted14() { linking_interrupted(); }
+#[test] fn linking_interrupted15() { linking_interrupted(); }
+#[test] fn linking_interrupted16() { linking_interrupted(); }
+#[test] fn linking_interrupted17() { linking_interrupted(); }
+#[test] fn linking_interrupted18() { linking_interrupted(); }
+#[test] fn linking_interrupted19() { linking_interrupted(); }
+#[test] fn linking_interrupted20() { linking_interrupted(); }
+#[test] fn linking_interrupted21() { linking_interrupted(); }
+#[test] fn linking_interrupted22() { linking_interrupted(); }
+#[test] fn linking_interrupted23() { linking_interrupted(); }
+#[test] fn linking_interrupted24() { linking_interrupted(); }
+#[test] fn linking_interrupted25() { linking_interrupted(); }
+#[test] fn linking_interrupted26() { linking_interrupted(); }
+#[test] fn linking_interrupted27() { linking_interrupted(); }
+#[test] fn linking_interrupted28() { linking_interrupted(); }
+#[test] fn linking_interrupted29() { linking_interrupted(); }
+#[test] fn linking_interrupted30() { linking_interrupted(); }
+#[test] fn linking_interrupted31() { linking_interrupted(); }
+#[test] fn linking_interrupted32() { linking_interrupted(); }
+#[test] fn linking_interrupted33() { linking_interrupted(); }
+#[test] fn linking_interrupted34() { linking_interrupted(); }
+#[test] fn linking_interrupted35() { linking_interrupted(); }
+#[test] fn linking_interrupted36() { linking_interrupted(); }
+#[test] fn linking_interrupted37() { linking_interrupted(); }
+#[test] fn linking_interrupted38() { linking_interrupted(); }
+#[test] fn linking_interrupted39() { linking_interrupted(); }
+#[test] fn linking_interrupted40() { linking_interrupted(); }
+#[test] fn linking_interrupted41() { linking_interrupted(); }
+#[test] fn linking_interrupted42() { linking_interrupted(); }
+#[test] fn linking_interrupted43() { linking_interrupted(); }
+#[test] fn linking_interrupted44() { linking_interrupted(); }
+#[test] fn linking_interrupted45() { linking_interrupted(); }
+#[test] fn linking_interrupted46() { linking_interrupted(); }
+#[test] fn linking_interrupted47() { linking_interrupted(); }
+#[test] fn linking_interrupted48() { linking_interrupted(); }
+#[test] fn linking_interrupted49() { linking_interrupted(); }
+#[test] fn linking_interrupted50() { linking_interrupted(); }
+#[test] fn linking_interrupted51() { linking_interrupted(); }
+#[test] fn linking_interrupted52() { linking_interrupted(); }
+#[test] fn linking_interrupted53() { linking_interrupted(); }
+#[test] fn linking_interrupted54() { linking_interrupted(); }
+#[test] fn linking_interrupted55() { linking_interrupted(); }
+#[test] fn linking_interrupted56() { linking_interrupted(); }
+#[test] fn linking_interrupted57() { linking_interrupted(); }
+#[test] fn linking_interrupted58() { linking_interrupted(); }
+#[test] fn linking_interrupted59() { linking_interrupted(); }
+#[test] fn linking_interrupted60() { linking_interrupted(); }
+#[test] fn linking_interrupted61() { linking_interrupted(); }
+#[test] fn linking_interrupted62() { linking_interrupted(); }
+#[test] fn linking_interrupted63() { linking_interrupted(); }
+#[test] fn linking_interrupted64() { linking_interrupted(); }
+#[test] fn linking_interrupted65() { linking_interrupted(); }
+#[test] fn linking_interrupted66() { linking_interrupted(); }
+#[test] fn linking_interrupted67() { linking_interrupted(); }
+#[test] fn linking_interrupted68() { linking_interrupted(); }
+#[test] fn linking_interrupted69() { linking_interrupted(); }
+#[test] fn linking_interrupted70() { linking_interrupted(); }
+#[test] fn linking_interrupted71() { linking_interrupted(); }
+#[test] fn linking_interrupted72() { linking_interrupted(); }
+#[test] fn linking_interrupted73() { linking_interrupted(); }
+#[test] fn linking_interrupted74() { linking_interrupted(); }
+#[test] fn linking_interrupted75() { linking_interrupted(); }
+#[test] fn linking_interrupted76() { linking_interrupted(); }
+#[test] fn linking_interrupted77() { linking_interrupted(); }
+#[test] fn linking_interrupted78() { linking_interrupted(); }
+#[test] fn linking_interrupted79() { linking_interrupted(); }
+#[test] fn linking_interrupted80() { linking_interrupted(); }
+#[test] fn linking_interrupted81() { linking_interrupted(); }
+#[test] fn linking_interrupted82() { linking_interrupted(); }
+#[test] fn linking_interrupted83() { linking_interrupted(); }
+#[test] fn linking_interrupted84() { linking_interrupted(); }
+#[test] fn linking_interrupted85() { linking_interrupted(); }
+#[test] fn linking_interrupted86() { linking_interrupted(); }
+#[test] fn linking_interrupted87() { linking_interrupted(); }
+#[test] fn linking_interrupted88() { linking_interrupted(); }
+#[test] fn linking_interrupted89() { linking_interrupted(); }
+#[test] fn linking_interrupted90() { linking_interrupted(); }
+#[test] fn linking_interrupted91() { linking_interrupted(); }
+#[test] fn linking_interrupted92() { linking_interrupted(); }
+#[test] fn linking_interrupted93() { linking_interrupted(); }
+#[test] fn linking_interrupted94() { linking_interrupted(); }
+#[test] fn linking_interrupted95() { linking_interrupted(); }
+#[test] fn linking_interrupted96() { linking_interrupted(); }
+#[test] fn linking_interrupted97() { linking_interrupted(); }
+#[test] fn linking_interrupted98() { linking_interrupted(); }
+#[test] fn linking_interrupted99() { linking_interrupted(); }
+#[test] fn linking_interrupted100() { linking_interrupted(); }
+#[test] fn linking_interrupted101() { linking_interrupted(); }
+#[test] fn linking_interrupted102() { linking_interrupted(); }
+#[test] fn linking_interrupted103() { linking_interrupted(); }
+#[test] fn linking_interrupted104() { linking_interrupted(); }
+#[test] fn linking_interrupted105() { linking_interrupted(); }
+#[test] fn linking_interrupted106() { linking_interrupted(); }
+#[test] fn linking_interrupted107() { linking_interrupted(); }
+#[test] fn linking_interrupted108() { linking_interrupted(); }
+#[test] fn linking_interrupted109() { linking_interrupted(); }
+#[test] fn linking_interrupted110() { linking_interrupted(); }
+#[test] fn linking_interrupted111() { linking_interrupted(); }
+#[test] fn linking_interrupted112() { linking_interrupted(); }
+#[test] fn linking_interrupted113() { linking_interrupted(); }
+#[test] fn linking_interrupted114() { linking_interrupted(); }
+#[test] fn linking_interrupted115() { linking_interrupted(); }
+#[test] fn linking_interrupted116() { linking_interrupted(); }
+#[test] fn linking_interrupted117() { linking_interrupted(); }
+#[test] fn linking_interrupted118() { linking_interrupted(); }
+#[test] fn linking_interrupted119() { linking_interrupted(); }
+#[test] fn linking_interrupted120() { linking_interrupted(); }
+#[test] fn linking_interrupted121() { linking_interrupted(); }
+#[test] fn linking_interrupted122() { linking_interrupted(); }
+#[test] fn linking_interrupted123() { linking_interrupted(); }
+#[test] fn linking_interrupted124() { linking_interrupted(); }
+#[test] fn linking_interrupted125() { linking_interrupted(); }
+#[test] fn linking_interrupted126() { linking_interrupted(); }
+#[test] fn linking_interrupted127() { linking_interrupted(); }
+#[test] fn linking_interrupted128() { linking_interrupted(); }
+#[test] fn linking_interrupted129() { linking_interrupted(); }
+#[test] fn linking_interrupted130() { linking_interrupted(); }
+#[test] fn linking_interrupted131() { linking_interrupted(); }
+#[test] fn linking_interrupted132() { linking_interrupted(); }
+#[test] fn linking_interrupted133() { linking_interrupted(); }
+#[test] fn linking_interrupted134() { linking_interrupted(); }
+#[test] fn linking_interrupted135() { linking_interrupted(); }
+#[test] fn linking_interrupted136() { linking_interrupted(); }
+#[test] fn linking_interrupted137() { linking_interrupted(); }
+#[test] fn linking_interrupted138() { linking_interrupted(); }
+#[test] fn linking_interrupted139() { linking_interrupted(); }
+#[test] fn linking_interrupted140() { linking_interrupted(); }
+#[test] fn linking_interrupted141() { linking_interrupted(); }
+#[test] fn linking_interrupted142() { linking_interrupted(); }
+#[test] fn linking_interrupted143() { linking_interrupted(); }
+#[test] fn linking_interrupted144() { linking_interrupted(); }
+#[test] fn linking_interrupted145() { linking_interrupted(); }
+#[test] fn linking_interrupted146() { linking_interrupted(); }
+#[test] fn linking_interrupted147() { linking_interrupted(); }
+#[test] fn linking_interrupted148() { linking_interrupted(); }
+#[test] fn linking_interrupted149() { linking_interrupted(); }
+#[test] fn linking_interrupted150() { linking_interrupted(); }
+#[test] fn linking_interrupted151() { linking_interrupted(); }
+#[test] fn linking_interrupted152() { linking_interrupted(); }
+#[test] fn linking_interrupted153() { linking_interrupted(); }
+#[test] fn linking_interrupted154() { linking_interrupted(); }
+#[test] fn linking_interrupted155() { linking_interrupted(); }
+#[test] fn linking_interrupted156() { linking_interrupted(); }
+#[test] fn linking_interrupted157() { linking_interrupted(); }
+#[test] fn linking_interrupted158() { linking_interrupted(); }
+#[test] fn linking_interrupted159() { linking_interrupted(); }
+#[test] fn linking_interrupted160() { linking_interrupted(); }
+#[test] fn linking_interrupted161() { linking_interrupted(); }
+#[test] fn linking_interrupted162() { linking_interrupted(); }
+#[test] fn linking_interrupted163() { linking_interrupted(); }
+#[test] fn linking_interrupted164() { linking_interrupted(); }
+#[test] fn linking_interrupted165() { linking_interrupted(); }
+#[test] fn linking_interrupted166() { linking_interrupted(); }
+#[test] fn linking_interrupted167() { linking_interrupted(); }
+#[test] fn linking_interrupted168() { linking_interrupted(); }
+#[test] fn linking_interrupted169() { linking_interrupted(); }
+#[test] fn linking_interrupted170() { linking_interrupted(); }
+#[test] fn linking_interrupted171() { linking_interrupted(); }
+#[test] fn linking_interrupted172() { linking_interrupted(); }
+#[test] fn linking_interrupted173() { linking_interrupted(); }
+#[test] fn linking_interrupted174() { linking_interrupted(); }
+#[test] fn linking_interrupted175() { linking_interrupted(); }
+#[test] fn linking_interrupted176() { linking_interrupted(); }
+#[test] fn linking_interrupted177() { linking_interrupted(); }
+#[test] fn linking_interrupted178() { linking_interrupted(); }
+#[test] fn linking_interrupted179() { linking_interrupted(); }
+#[test] fn linking_interrupted180() { linking_interrupted(); }
+#[test] fn linking_interrupted181() { linking_interrupted(); }
+#[test] fn linking_interrupted182() { linking_interrupted(); }
+#[test] fn linking_interrupted183() { linking_interrupted(); }
+#[test] fn linking_interrupted184() { linking_interrupted(); }
+#[test] fn linking_interrupted185() { linking_interrupted(); }
+#[test] fn linking_interrupted186() { linking_interrupted(); }
+#[test] fn linking_interrupted187() { linking_interrupted(); }
+#[test] fn linking_interrupted188() { linking_interrupted(); }
+#[test] fn linking_interrupted189() { linking_interrupted(); }
+#[test] fn linking_interrupted190() { linking_interrupted(); }
+#[test] fn linking_interrupted191() { linking_interrupted(); }
+#[test] fn linking_interrupted192() { linking_interrupted(); }
+#[test] fn linking_interrupted193() { linking_interrupted(); }
+#[test] fn linking_interrupted194() { linking_interrupted(); }
+#[test] fn linking_interrupted195() { linking_interrupted(); }
+#[test] fn linking_interrupted196() { linking_interrupted(); }
+#[test] fn linking_interrupted197() { linking_interrupted(); }
+#[test] fn linking_interrupted198() { linking_interrupted(); }
+#[test] fn linking_interrupted199() { linking_interrupted(); }
+#[test] fn linking_interrupted200() { linking_interrupted(); }
+#[test] fn linking_interrupted201() { linking_interrupted(); }
+#[test] fn linking_interrupted202() { linking_interrupted(); }
+#[test] fn linking_interrupted203() { linking_interrupted(); }
+#[test] fn linking_interrupted204() { linking_interrupted(); }
+#[test] fn linking_interrupted205() { linking_interrupted(); }
+#[test] fn linking_interrupted206() { linking_interrupted(); }
+#[test] fn linking_interrupted207() { linking_interrupted(); }
+#[test] fn linking_interrupted208() { linking_interrupted(); }
+#[test] fn linking_interrupted209() { linking_interrupted(); }
+#[test] fn linking_interrupted210() { linking_interrupted(); }
+#[test] fn linking_interrupted211() { linking_interrupted(); }
+#[test] fn linking_interrupted212() { linking_interrupted(); }
+#[test] fn linking_interrupted213() { linking_interrupted(); }
+#[test] fn linking_interrupted214() { linking_interrupted(); }
+#[test] fn linking_interrupted215() { linking_interrupted(); }
+#[test] fn linking_interrupted216() { linking_interrupted(); }
+#[test] fn linking_interrupted217() { linking_interrupted(); }
+#[test] fn linking_interrupted218() { linking_interrupted(); }
+#[test] fn linking_interrupted219() { linking_interrupted(); }
+#[test] fn linking_interrupted220() { linking_interrupted(); }
+#[test] fn linking_interrupted221() { linking_interrupted(); }
+#[test] fn linking_interrupted222() { linking_interrupted(); }
+#[test] fn linking_interrupted223() { linking_interrupted(); }
+#[test] fn linking_interrupted224() { linking_interrupted(); }
+#[test] fn linking_interrupted225() { linking_interrupted(); }
+#[test] fn linking_interrupted226() { linking_interrupted(); }
+#[test] fn linking_interrupted227() { linking_interrupted(); }
+#[test] fn linking_interrupted228() { linking_interrupted(); }
+#[test] fn linking_interrupted229() { linking_interrupted(); }
+#[test] fn linking_interrupted230() { linking_interrupted(); }
+#[test] fn linking_interrupted231() { linking_interrupted(); }
+#[test] fn linking_interrupted232() { linking_interrupted(); }
+#[test] fn linking_interrupted233() { linking_interrupted(); }
+#[test] fn linking_interrupted234() { linking_interrupted(); }
+#[test] fn linking_interrupted235() { linking_interrupted(); }
+#[test] fn linking_interrupted236() { linking_interrupted(); }
+#[test] fn linking_interrupted237() { linking_interrupted(); }
+#[test] fn linking_interrupted238() { linking_interrupted(); }
+#[test] fn linking_interrupted239() { linking_interrupted(); }
+#[test] fn linking_interrupted240() { linking_interrupted(); }
+#[test] fn linking_interrupted241() { linking_interrupted(); }
+#[test] fn linking_interrupted242() { linking_interrupted(); }
+#[test] fn linking_interrupted243() { linking_interrupted(); }
+#[test] fn linking_interrupted244() { linking_interrupted(); }
+#[test] fn linking_interrupted245() { linking_interrupted(); }
+#[test] fn linking_interrupted246() { linking_interrupted(); }
+#[test] fn linking_interrupted247() { linking_interrupted(); }
+#[test] fn linking_interrupted248() { linking_interrupted(); }
+#[test] fn linking_interrupted249() { linking_interrupted(); }
+#[test] fn linking_interrupted250() { linking_interrupted(); }
+#[test] fn linking_interrupted251() { linking_interrupted(); }
+#[test] fn linking_interrupted252() { linking_interrupted(); }
+#[test] fn linking_interrupted253() { linking_interrupted(); }
+#[test] fn linking_interrupted254() { linking_interrupted(); }
+#[test] fn linking_interrupted255() { linking_interrupted(); }
+#[test] fn linking_interrupted256() { linking_interrupted(); }
+#[test] fn linking_interrupted257() { linking_interrupted(); }
+#[test] fn linking_interrupted258() { linking_interrupted(); }
+#[test] fn linking_interrupted259() { linking_interrupted(); }
+#[test] fn linking_interrupted260() { linking_interrupted(); }
+#[test] fn linking_interrupted261() { linking_interrupted(); }
+#[test] fn linking_interrupted262() { linking_interrupted(); }
+#[test] fn linking_interrupted263() { linking_interrupted(); }
+#[test] fn linking_interrupted264() { linking_interrupted(); }
+#[test] fn linking_interrupted265() { linking_interrupted(); }
+#[test] fn linking_interrupted266() { linking_interrupted(); }
+#[test] fn linking_interrupted267() { linking_interrupted(); }
+#[test] fn linking_interrupted268() { linking_interrupted(); }
+#[test] fn linking_interrupted269() { linking_interrupted(); }
+#[test] fn linking_interrupted270() { linking_interrupted(); }
+#[test] fn linking_interrupted271() { linking_interrupted(); }
+#[test] fn linking_interrupted272() { linking_interrupted(); }
+#[test] fn linking_interrupted273() { linking_interrupted(); }
+#[test] fn linking_interrupted274() { linking_interrupted(); }
+#[test] fn linking_interrupted275() { linking_interrupted(); }
+#[test] fn linking_interrupted276() { linking_interrupted(); }
+#[test] fn linking_interrupted277() { linking_interrupted(); }
+#[test] fn linking_interrupted278() { linking_interrupted(); }
+#[test] fn linking_interrupted279() { linking_interrupted(); }
+#[test] fn linking_interrupted280() { linking_interrupted(); }
+#[test] fn linking_interrupted281() { linking_interrupted(); }
+#[test] fn linking_interrupted282() { linking_interrupted(); }
+#[test] fn linking_interrupted283() { linking_interrupted(); }
+#[test] fn linking_interrupted284() { linking_interrupted(); }
+#[test] fn linking_interrupted285() { linking_interrupted(); }
+#[test] fn linking_interrupted286() { linking_interrupted(); }
+#[test] fn linking_interrupted287() { linking_interrupted(); }
+#[test] fn linking_interrupted288() { linking_interrupted(); }
+#[test] fn linking_interrupted289() { linking_interrupted(); }
+#[test] fn linking_interrupted290() { linking_interrupted(); }
+#[test] fn linking_interrupted291() { linking_interrupted(); }
+#[test] fn linking_interrupted292() { linking_interrupted(); }
+#[test] fn linking_interrupted293() { linking_interrupted(); }
+#[test] fn linking_interrupted294() { linking_interrupted(); }
+#[test] fn linking_interrupted295() { linking_interrupted(); }
+#[test] fn linking_interrupted296() { linking_interrupted(); }
+#[test] fn linking_interrupted297() { linking_interrupted(); }
+#[test] fn linking_interrupted298() { linking_interrupted(); }
+#[test] fn linking_interrupted299() { linking_interrupted(); }
+#[test] fn linking_interrupted300() { linking_interrupted(); }
+#[test] fn linking_interrupted301() { linking_interrupted(); }
+#[test] fn linking_interrupted302() { linking_interrupted(); }
+#[test] fn linking_interrupted303() { linking_interrupted(); }
+#[test] fn linking_interrupted304() { linking_interrupted(); }
+#[test] fn linking_interrupted305() { linking_interrupted(); }
+#[test] fn linking_interrupted306() { linking_interrupted(); }
+#[test] fn linking_interrupted307() { linking_interrupted(); }
+#[test] fn linking_interrupted308() { linking_interrupted(); }
+#[test] fn linking_interrupted309() { linking_interrupted(); }
+#[test] fn linking_interrupted310() { linking_interrupted(); }
+#[test] fn linking_interrupted311() { linking_interrupted(); }
+#[test] fn linking_interrupted312() { linking_interrupted(); }
+#[test] fn linking_interrupted313() { linking_interrupted(); }
+#[test] fn linking_interrupted314() { linking_interrupted(); }
+#[test] fn linking_interrupted315() { linking_interrupted(); }
+#[test] fn linking_interrupted316() { linking_interrupted(); }
+#[test] fn linking_interrupted317() { linking_interrupted(); }
+#[test] fn linking_interrupted318() { linking_interrupted(); }
+#[test] fn linking_interrupted319() { linking_interrupted(); }
+#[test] fn linking_interrupted320() { linking_interrupted(); }
+#[test] fn linking_interrupted321() { linking_interrupted(); }
+#[test] fn linking_interrupted322() { linking_interrupted(); }
+#[test] fn linking_interrupted323() { linking_interrupted(); }
+#[test] fn linking_interrupted324() { linking_interrupted(); }
+#[test] fn linking_interrupted325() { linking_interrupted(); }
+#[test] fn linking_interrupted326() { linking_interrupted(); }
+#[test] fn linking_interrupted327() { linking_interrupted(); }
+#[test] fn linking_interrupted328() { linking_interrupted(); }
+#[test] fn linking_interrupted329() { linking_interrupted(); }
+#[test] fn linking_interrupted330() { linking_interrupted(); }
+#[test] fn linking_interrupted331() { linking_interrupted(); }
+#[test] fn linking_interrupted332() { linking_interrupted(); }
+#[test] fn linking_interrupted333() { linking_interrupted(); }
+#[test] fn linking_interrupted334() { linking_interrupted(); }
+#[test] fn linking_interrupted335() { linking_interrupted(); }
+#[test] fn linking_interrupted336() { linking_interrupted(); }
+#[test] fn linking_interrupted337() { linking_interrupted(); }
+#[test] fn linking_interrupted338() { linking_interrupted(); }
+#[test] fn linking_interrupted339() { linking_interrupted(); }
+#[test] fn linking_interrupted340() { linking_interrupted(); }
+#[test] fn linking_interrupted341() { linking_interrupted(); }
+#[test] fn linking_interrupted342() { linking_interrupted(); }
+#[test] fn linking_interrupted343() { linking_interrupted(); }
+#[test] fn linking_interrupted344() { linking_interrupted(); }
+#[test] fn linking_interrupted345() { linking_interrupted(); }
+#[test] fn linking_interrupted346() { linking_interrupted(); }
+#[test] fn linking_interrupted347() { linking_interrupted(); }
+#[test] fn linking_interrupted348() { linking_interrupted(); }
+#[test] fn linking_interrupted349() { linking_interrupted(); }
+#[test] fn linking_interrupted350() { linking_interrupted(); }
+#[test] fn linking_interrupted351() { linking_interrupted(); }
+#[test] fn linking_interrupted352() { linking_interrupted(); }
+#[test] fn linking_interrupted353() { linking_interrupted(); }
+#[test] fn linking_interrupted354() { linking_interrupted(); }
+#[test] fn linking_interrupted355() { linking_interrupted(); }
+#[test] fn linking_interrupted356() { linking_interrupted(); }
+#[test] fn linking_interrupted357() { linking_interrupted(); }
+#[test] fn linking_interrupted358() { linking_interrupted(); }
+#[test] fn linking_interrupted359() { linking_interrupted(); }
+#[test] fn linking_interrupted360() { linking_interrupted(); }
+#[test] fn linking_interrupted361() { linking_interrupted(); }
+#[test] fn linking_interrupted362() { linking_interrupted(); }
+#[test] fn linking_interrupted363() { linking_interrupted(); }
+#[test] fn linking_interrupted364() { linking_interrupted(); }
+#[test] fn linking_interrupted365() { linking_interrupted(); }
+#[test] fn linking_interrupted366() { linking_interrupted(); }
+#[test] fn linking_interrupted367() { linking_interrupted(); }
+#[test] fn linking_interrupted368() { linking_interrupted(); }
+#[test] fn linking_interrupted369() { linking_interrupted(); }
+#[test] fn linking_interrupted370() { linking_interrupted(); }
+#[test] fn linking_interrupted371() { linking_interrupted(); }
+#[test] fn linking_interrupted372() { linking_interrupted(); }
+#[test] fn linking_interrupted373() { linking_interrupted(); }
+#[test] fn linking_interrupted374() { linking_interrupted(); }
+#[test] fn linking_interrupted375() { linking_interrupted(); }
+#[test] fn linking_interrupted376() { linking_interrupted(); }
+#[test] fn linking_interrupted377() { linking_interrupted(); }
+#[test] fn linking_interrupted378() { linking_interrupted(); }
+#[test] fn linking_interrupted379() { linking_interrupted(); }
+#[test] fn linking_interrupted380() { linking_interrupted(); }
+#[test] fn linking_interrupted381() { linking_interrupted(); }
+#[test] fn linking_interrupted382() { linking_interrupted(); }
+#[test] fn linking_interrupted383() { linking_interrupted(); }
+#[test] fn linking_interrupted384() { linking_interrupted(); }
+#[test] fn linking_interrupted385() { linking_interrupted(); }
+#[test] fn linking_interrupted386() { linking_interrupted(); }
+#[test] fn linking_interrupted387() { linking_interrupted(); }
+#[test] fn linking_interrupted388() { linking_interrupted(); }
+#[test] fn linking_interrupted389() { linking_interrupted(); }
+#[test] fn linking_interrupted390() { linking_interrupted(); }
+#[test] fn linking_interrupted391() { linking_interrupted(); }
+#[test] fn linking_interrupted392() { linking_interrupted(); }
+#[test] fn linking_interrupted393() { linking_interrupted(); }
+#[test] fn linking_interrupted394() { linking_interrupted(); }
+#[test] fn linking_interrupted395() { linking_interrupted(); }
+#[test] fn linking_interrupted396() { linking_interrupted(); }
+#[test] fn linking_interrupted397() { linking_interrupted(); }
+#[test] fn linking_interrupted398() { linking_interrupted(); }
+#[test] fn linking_interrupted399() { linking_interrupted(); }
+
 #[cargo_test]
 fn linking_interrupted() {
     // Interrupt during the linking phase shouldn't leave test executable as "fresh".
+    if !death::enabled() {
+        return;
+    }
 
     // This is used to detect when linking starts, then to pause the linker so
     // that the test can kill cargo.
@@ -2332,9 +2737,12 @@ fn linking_interrupted() {
         .file(
             "src/main.rs",
             &r#"
-            use std::io::Read;
-
+            // use std::io::Write;
             fn main() {
+                // let mut f = std::fs::OpenOptions::new().append(true).create(true).open("foo.txt").unwrap();
+                // let args: Vec<_> = std::env::args().collect();
+                // writeln!(f, "{:?} linker start {:?}", std::time::Instant::now(), args).unwrap();
+
                 // Figure out the output filename.
                 let output = match std::env::args().find(|a| a.starts_with("/OUT:")) {
                     Some(s) => s[5..].to_string(),
@@ -2351,9 +2759,11 @@ fn linking_interrupted() {
                 std::fs::remove_file(&output).unwrap();
                 std::fs::write(&output, "").unwrap();
                 // Tell the test that we are ready to be interrupted.
+                // writeln!(f, "{:?} linker wait to exit", std::time::Instant::now()).unwrap();
                 let mut socket = std::net::TcpStream::connect("__ADDR__").unwrap();
-                // Wait for the test to tell us to exit.
-                drop(socket.read(&mut [0; 1]));
+                // writeln!(f, "{:?} linker exiting", std::time::Instant::now()).unwrap();
+                // Wait for the test to kill us.
+                std::thread::sleep(std::time::Duration::new(60, 0));
             }
             "#
             .replace("__ADDR__", &link_addr.to_string()),
@@ -2368,18 +2778,23 @@ fn linking_interrupted() {
         .file(
             "src/main.rs",
             &r#"
+            // use std::io::Write;
             fn main() {
+                // let mut f = std::fs::OpenOptions::new().append(true).create(true).open("foo.txt").unwrap();
                 let mut conn = None;
                 // Check for a normal build (not -vV or --print).
                 if std::env::args().any(|arg| arg == "t1") {
                     // Tell the test that rustc has started.
+                    // writeln!(f, "{:?} rustc connect to test", std::time::Instant::now()).unwrap();
                     conn = Some(std::net::TcpStream::connect("__ADDR__").unwrap());
                 }
-                let args: Vec<_> = std::env::args().collect();
+                // let args: Vec<_> = std::env::args().collect();
+                // writeln!(f, "{:?} rustc spawning {:?}", std::time::Instant::now(), args).unwrap();
                 let status = std::process::Command::new("rustc")
                     .args(std::env::args().skip(1))
                     .status()
                     .expect("rustc to run");
+                // writeln!(f, "{:?} rustc is done, exiting", std::time::Instant::now()).unwrap();
                 std::process::exit(status.code().unwrap_or(1));
             }
             "#
@@ -2395,6 +2810,9 @@ fn linking_interrupted() {
         .build();
     p.cargo("test --test t1 --no-run").run();
 
+    // let mut f = std::fs::OpenOptions::new().append(true).create(true).open("foo.txt").unwrap();
+    // writeln!(f, "{:?} start", std::time::Instant::now()).unwrap();
+
     // Make a change, start a build, then interrupt it.
     p.change_file("src/lib.rs", "// modified");
     let linker_env = format!(
@@ -2408,33 +2826,30 @@ fn linking_interrupted() {
         .env(&linker_env, linker.bin("linker"))
         .env("RUSTC", rustc.bin("rustc-waiter"))
         .build_command();
+    // writeln!(f, "{:?} TEST: launching cargo", std::time::Instant::now()).unwrap();
     let mut child = cmd
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .env("__CARGO_TEST_SETSID_PLEASE_DONT_USE_ELSEWHERE", "1")
         .spawn()
         .unwrap();
     // Wait for rustc to start.
+    // writeln!(f, "{:?} TEST: wait for rustc to start", std::time::Instant::now()).unwrap();
     let mut rustc_conn = rustc_listener.accept().unwrap().0;
     // Wait for linking to start.
-    let mut linker_conn = link_listener.accept().unwrap().0;
+    // writeln!(f, "{:?} TEST: wait for linker to start", std::time::Instant::now()).unwrap();
+    drop(link_listener.accept().unwrap());
 
     // Interrupt the child.
-    child.kill().unwrap();
-    child.wait().unwrap();
-    // Note: rustc and the linker may still be running because we didn't kill
-    // the entire process group. Normally, when a user hits Ctrl-C, everything
-    // is killed. However, setting up process groups in a cross-platform test
-    // is a pain, and there's no easy way to know when everything has been
-    // killed. This write will tell them to exit, pretending that they died
-    // before finishing. Ignore the error, because (sometimes?) on Windows
-    // everything is already killed.
-    drop(linker_conn.write_all(b"X"));
+    // writeln!(f, "{:?} TEST: killing", std::time::Instant::now()).unwrap();
+    death::ctrl_c(&mut child);
+    assert!(!child.wait().unwrap().success());
     // Wait for rustc to exit. If we don't wait, then the command below could
-    // start while rustc was still cleaning up. I have seen some race
-    // conditions on macOS where clang dies with `no such
-    // file...t1-HASH.rcgu.o`.
+    // start while rustc is still being torn down.
+    // writeln!(f, "{:?} TEST: wait for rustc to exit", std::time::Instant::now()).unwrap();
     let mut buf = [0];
     drop(rustc_conn.read_exact(&mut buf));
+    // writeln!(f, "{:?} TEST: wait finished, do final build", std::time::Instant::now()).unwrap();
 
     // Build again, shouldn't be fresh.
     p.cargo("test --test t1")

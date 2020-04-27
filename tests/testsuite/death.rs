@@ -9,7 +9,7 @@ use std::thread;
 use cargo_test_support::{project, slow_cpu_multiplier};
 
 #[cfg(unix)]
-fn enabled() -> bool {
+pub fn enabled() -> bool {
     true
 }
 
@@ -20,7 +20,7 @@ fn enabled() -> bool {
 // As a result, we try to add ourselves to a job object here
 // can succeed or not.
 #[cfg(windows)]
-fn enabled() -> bool {
+pub fn enabled() -> bool {
     use winapi::um::{handleapi, jobapi, jobapi2, processthreadsapi};
 
     unsafe {
@@ -132,7 +132,7 @@ fn ctrl_c_kills_everyone() {
 }
 
 #[cfg(unix)]
-fn ctrl_c(child: &mut Child) {
+pub fn ctrl_c(child: &mut Child) {
     let r = unsafe { libc::kill(-(child.id() as i32), libc::SIGINT) };
     if r < 0 {
         panic!("failed to kill: {}", io::Error::last_os_error());
@@ -140,6 +140,6 @@ fn ctrl_c(child: &mut Child) {
 }
 
 #[cfg(windows)]
-fn ctrl_c(child: &mut Child) {
+pub fn ctrl_c(child: &mut Child) {
     child.kill().unwrap();
 }
