@@ -45,7 +45,8 @@ pub fn enabled() -> bool {
         let r = jobapi2::AssignProcessToJobObject(job, me);
         handleapi::CloseHandle(job);
         if r == 0 {
-            eprintln!("ctrl-c not supported");
+            let e = std::io::Error::last_os_error();
+            eprintln!("ctrl-c not supported {:?}", e);
         }
         r != 0
     }

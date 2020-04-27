@@ -2717,9 +2717,6 @@ LLVM version: 9.0
 #[cargo_test]
 fn linking_interrupted() {
     // Interrupt during the linking phase shouldn't leave test executable as "fresh".
-    if !death::enabled() {
-        return;
-    }
 
     // This is used to detect when linking starts, then to pause the linker so
     // that the test can kill cargo.
