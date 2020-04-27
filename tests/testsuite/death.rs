@@ -44,6 +44,9 @@ pub fn enabled() -> bool {
         assert!(!job.is_null());
         let r = jobapi2::AssignProcessToJobObject(job, me);
         handleapi::CloseHandle(job);
+        if r == 0 {
+            eprintln!("ctrl-c not supported");
+        }
         r != 0
     }
 }
