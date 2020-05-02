@@ -41,6 +41,7 @@ pub use self::custom_build::{BuildOutput, BuildScriptOutputs, BuildScripts};
 pub use self::job::Freshness;
 use self::job::{Job, Work};
 use self::job_queue::{JobQueue, JobState};
+pub(crate) use self::layout::Layout;
 use self::output_depinfo::output_depinfo;
 use self::unit_graph::UnitDep;
 pub use crate::core::compiler::unit::{Unit, UnitInterner};
@@ -193,7 +194,6 @@ fn rustc(cx: &mut Context<'_, '_>, unit: &Unit, exec: &Arc<dyn Executor>) -> Car
     let pass_l_flag = unit.target.is_lib() || !unit.pkg.targets().iter().any(|t| t.is_lib());
     let pass_cdylib_link_args = unit.target.is_cdylib();
     let do_rename = unit.target.allows_dashes() && !unit.mode.is_any_test();
-    let real_name = unit.target.name().to_string();
     let crate_name = unit.target.crate_name();
 
     // Rely on `target_filenames` iterator as source of truth rather than rederiving filestem.
@@ -292,20 +292,6 @@ fn rustc(cx: &mut Context<'_, '_>, unit: &Unit, exec: &Arc<dyn Executor>) -> Car
             )
             .map_err(verbose_if_simple_exit_code)
             .chain_err(|| format!("could not compile `{}`.", name))?;
-        }
-
-        if do_rename && real_name != crate_name {
-            let dst = &outputs[0].path;
-            let src = dst.with_file_name(
-                dst.file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .replace(&real_name, &crate_name),
-            );
-            if src.exists() && src.file_name() != dst.file_name() {
-                fs::rename(&src, &dst).chain_err(|| format!("could not rename crate {:?}", src))?;
-            }
         }
 
         if rustc_dep_info_loc.exists() {
@@ -1069,19 +1055,18 @@ pub fn extern_args(
             };
 
             let outputs = cx.outputs(&dep.unit)?;
-            let mut outputs = outputs.iter().filter_map(|output| match output.flavor {
-                FileFlavor::Linkable { rmeta } => Some((output, rmeta)),
-                _ => None,
-            });
 
-            if cx.only_requires_rmeta(unit, &dep.unit) {
-                let (output, _rmeta) = outputs
-                    .find(|(_output, rmeta)| *rmeta)
-                    .expect("failed to find rlib dep for pipelined dep");
+            if cx.only_requires_rmeta(unit, &dep.unit) || dep.unit.mode.is_check() {
+                // Example: rlib dependency for an rlib, rmeta is all that is required.
+                let output = outputs
+                    .iter()
+                    .find(|output| output.flavor == FileFlavor::Rmeta)
+                    .expect("failed to find rmeta dep for pipelined dep");
                 pass(&output.path);
             } else {
-                for (output, rmeta) in outputs {
-                    if !rmeta {
+                // Example: a bin needs `rlib` for dependencies, it cannot use rmeta.
+                for output in outputs.iter() {
+                    if output.flavor == FileFlavor::Linkable {
                         pass(&output.path);
                     }
                 }

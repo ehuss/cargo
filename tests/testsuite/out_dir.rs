@@ -90,7 +90,7 @@ fn dynamic_library_with_debug() {
     check_dir_contents(
         &p.root().join("out"),
         &["libfoo.so"],
-        &["libfoo.dylib"],
+        &["libfoo.dylib", "libfoo.dylib.dSYM"],
         &["foo.dll", "foo.dll.lib"],
         &["foo.dll", "libfoo.dll.a"],
     );

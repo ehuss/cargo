@@ -9,7 +9,7 @@ use lazycell::LazyCell;
 use log::info;
 
 use super::{BuildContext, CompileKind, Context, FileFlavor, Layout};
-use crate::core::compiler::{CompileMode, CompileTarget, CrateType, Unit};
+use crate::core::compiler::{CompileMode, CompileTarget, Unit};
 use crate::core::{Target, TargetKind, Workspace};
 use crate::util::{self, CargoResult};
 
@@ -272,13 +272,12 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
         assert!(target.is_bin());
         let dest = self.layout(kind).dest();
         let info = bcx.target_data.info(kind);
-        let file_types = info
-            .file_types(
-                &CrateType::Bin,
-                FileFlavor::Normal,
+        let (file_types, _) = info
+            .rustc_outputs(
+                CompileMode::Build,
                 &TargetKind::Bin,
                 bcx.target_data.short_name(&kind),
-            )?
+            )
             .expect("target must support `bin`");
 
         let file_type = file_types
@@ -359,18 +358,6 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
         bcx: &BuildContext<'a, 'cfg>,
     ) -> CargoResult<Arc<Vec<OutputFile>>> {
         let ret = match unit.mode {
-            CompileMode::Check { .. } => {
-                // This may be confusing. rustc outputs a file named `lib*.rmeta`
-                // for both libraries and binaries.
-                let file_stem = self.file_stem(unit);
-                let path = self.out_dir(unit).join(format!("lib{}.rmeta", file_stem));
-                vec![OutputFile {
-                    path,
-                    hardlink: None,
-                    export_path: None,
-                    flavor: FileFlavor::Linkable { rmeta: false },
-                }]
-            }
             CompileMode::Doc { .. } => {
                 let path = self
                     .out_dir(unit)
@@ -394,9 +381,10 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
                 // but Cargo does not know about that.
                 vec![]
             }
-            CompileMode::Test | CompileMode::Build | CompileMode::Bench => {
-                self.calc_outputs_rustc(unit, bcx)?
-            }
+            CompileMode::Test
+            | CompileMode::Build
+            | CompileMode::Bench
+            | CompileMode::Check { .. } => self.calc_outputs_rustc(unit, bcx)?,
         };
         info!("Target filenames: {:?}", ret);
 
@@ -408,109 +396,62 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
         unit: &Unit,
         bcx: &BuildContext<'a, 'cfg>,
     ) -> CargoResult<Vec<OutputFile>> {
-        let mut ret = Vec::new();
-        let mut unsupported = Vec::new();
-
         let out_dir = self.out_dir(unit);
         let link_stem = self.link_stem(unit);
         let info = bcx.target_data.info(unit.kind);
         let file_stem = self.file_stem(unit);
 
-        let mut add = |crate_type: &CrateType, flavor: FileFlavor| -> CargoResult<()> {
-            let file_types = info.file_types(
-                crate_type,
-                flavor,
-                unit.target.kind(),
-                bcx.target_data.short_name(&unit.kind),
-            )?;
-
-            match file_types {
-                Some(types) => {
-                    for file_type in types {
-                        let path = out_dir.join(file_type.filename(&file_stem));
-                        // Don't create hardlink for tests
-                        let hardlink = if unit.mode.is_any_test() {
-                            None
-                        } else {
-                            link_stem
-                                .as_ref()
-                                .map(|&(ref ld, ref ls)| ld.join(file_type.filename(ls)))
-                        };
-                        let export_path = if unit.target.is_custom_build() {
-                            None
-                        } else {
-                            self.export_dir.as_ref().and_then(|export_dir| {
-                                hardlink
-                                    .as_ref()
-                                    .map(|hardlink| export_dir.join(hardlink.file_name().unwrap()))
-                            })
-                        };
-                        ret.push(OutputFile {
-                            path,
-                            hardlink,
-                            export_path,
-                            flavor: file_type.flavor,
-                        });
-                    }
-                }
-                // Not supported; don't worry about it.
-                None => {
-                    unsupported.push(crate_type.to_string());
-                }
-            }
-            Ok(())
-        };
-        match unit.target.kind() {
-            TargetKind::Bin
-            | TargetKind::CustomBuild
-            | TargetKind::ExampleBin
-            | TargetKind::Bench
-            | TargetKind::Test => {
-                add(&CrateType::Bin, FileFlavor::Normal)?;
-            }
-            TargetKind::Lib(..) | TargetKind::ExampleLib(..) if unit.mode.is_any_test() => {
-                add(&CrateType::Bin, FileFlavor::Normal)?;
-            }
-            TargetKind::ExampleLib(crate_types) | TargetKind::Lib(crate_types) => {
-                for crate_type in crate_types {
-                    add(
-                        crate_type,
-                        if crate_type.is_linkable() {
-                            FileFlavor::Linkable { rmeta: false }
-                        } else {
-                            FileFlavor::Normal
-                        },
-                    )?;
-                }
-                let path = out_dir.join(format!("lib{}.rmeta", file_stem));
-                if !unit.requires_upstream_objects() {
-                    ret.push(OutputFile {
-                        path,
-                        hardlink: None,
-                        export_path: None,
-                        flavor: FileFlavor::Linkable { rmeta: true },
-                    });
-                }
-            }
-        }
-        if ret.is_empty() {
+        let triple = bcx.target_data.short_name(&unit.kind);
+        let (file_types, unsupported) =
+            info.rustc_outputs(unit.mode, unit.target.kind(), triple)?;
+        if file_types.is_empty() {
             if !unsupported.is_empty() {
+                let unsupported_strs: Vec<_> = unsupported.iter().map(|ct| ct.as_str()).collect();
                 anyhow::bail!(
                     "cannot produce {} for `{}` as the target `{}` \
                      does not support these crate types",
-                    unsupported.join(", "),
+                    unsupported_strs.join(", "),
                     unit.pkg,
-                    bcx.target_data.short_name(&unit.kind),
+                    triple,
                 )
             }
             anyhow::bail!(
                 "cannot compile `{}` as the target `{}` does not \
                  support any of the output crate types",
                 unit.pkg,
-                bcx.target_data.short_name(&unit.kind),
+                triple,
             );
         }
-        Ok(ret)
+
+        // Convert FileType to OutputFile.
+        let mut outputs = Vec::new();
+        for file_type in file_types {
+            let path = out_dir.join(file_type.filename(&file_stem));
+            // Don't create hardlink for tests or rmeta
+            let hardlink = if unit.mode.is_any_test() || file_type.flavor == FileFlavor::Rmeta {
+                None
+            } else {
+                link_stem
+                    .as_ref()
+                    .map(|&(ref ld, ref ls)| ld.join(file_type.filename(ls)))
+            };
+            let export_path = if unit.target.is_custom_build() {
+                None
+            } else {
+                self.export_dir.as_ref().and_then(|export_dir| {
+                    hardlink
+                        .as_ref()
+                        .map(|hardlink| export_dir.join(hardlink.file_name().unwrap()))
+                })
+            };
+            outputs.push(OutputFile {
+                path,
+                hardlink,
+                export_path,
+                flavor: file_type.flavor,
+            });
+        }
+        Ok(outputs)
     }
 }
 
