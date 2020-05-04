@@ -35,6 +35,17 @@ impl CrateType {
         }
     }
 
+    pub fn is_dynamic(&self) -> bool {
+        match self {
+            CrateType::Dylib | CrateType::Cdylib | CrateType::ProcMacro => true,
+            CrateType::Lib
+            | CrateType::Rlib
+            | CrateType::Bin
+            | CrateType::Staticlib
+            | CrateType::Other(..) => false,
+        }
+    }
+
     pub fn requires_upstream_objects(&self) -> bool {
         match self {
             // "lib" == "rlib" and is a compilation that doesn't actually

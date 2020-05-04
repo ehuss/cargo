@@ -9,7 +9,7 @@ use lazycell::LazyCell;
 use log::info;
 
 use super::{BuildContext, CompileKind, Context, FileFlavor, Layout};
-use crate::core::compiler::{CompileMode, CompileTarget, Unit};
+use crate::core::compiler::{CompileMode, CompileTarget, CrateType, FileType, Unit};
 use crate::core::{Target, TargetKind, Workspace};
 use crate::util::{self, CargoResult};
 
@@ -169,8 +169,8 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
         util::short_hash(&hashable)
     }
 
-    /// Returns the appropriate output directory for the specified package and
-    /// target.
+    /// Returns the directory where the artifacts for the given unit are
+    /// initially created.
     pub fn out_dir(&self, unit: &Unit) -> PathBuf {
         if unit.mode.is_doc() {
             self.layout(unit.kind).doc().to_path_buf()
@@ -252,14 +252,6 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
         self.build_script_run_dir(unit).join("out")
     }
 
-    /// Returns the file stem for a given target/profile combo (with metadata).
-    pub fn file_stem(&self, unit: &Unit) -> String {
-        match self.metas[unit] {
-            Some(ref metadata) => format!("{}-{}", unit.target.crate_name(), metadata),
-            None => self.bin_stem(unit),
-        }
-    }
-
     /// Returns the path to the executable binary for the given bin target.
     ///
     /// This should only to be used when a `Unit` is not available.
@@ -285,10 +277,13 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
             .find(|file_type| file_type.flavor == FileFlavor::Normal)
             .expect("target must support `bin`");
 
-        Ok(dest.join(file_type.filename(target.name())))
+        Ok(dest.join(file_type.uplift_filename(target)))
     }
 
     /// Returns the filenames that the given unit will generate.
+    ///
+    /// Note: It is not guaranteed that all of the files will have been
+    /// generated.
     pub(super) fn outputs(
         &self,
         unit: &Unit,
@@ -299,57 +294,50 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
             .map(Arc::clone)
     }
 
-    /// Returns the bin filename for a given target, without extension and metadata.
-    fn bin_stem(&self, unit: &Unit) -> String {
-        if unit.target.allows_dashes() {
-            unit.target.name().to_string()
-        } else {
-            unit.target.crate_name()
+    /// Returns the path where the output for the given unit and FileType
+    /// should be uplifted to.
+    ///
+    /// Returns `None` if the unit shouldn't be uplifted (for example, a
+    /// dependent rlib).
+    fn uplift_to(&self, unit: &Unit, file_type: &FileType, from_path: &Path) -> Option<PathBuf> {
+        // Tests, check, doc, etc. should not be uplifted.
+        if unit.mode != CompileMode::Build || file_type.flavor == FileFlavor::Rmeta {
+            return None;
         }
-    }
-
-    /// Returns a tuple `(hard_link_dir, filename_stem)` for the primary
-    /// output file for the given unit.
-    ///
-    /// `hard_link_dir` is the directory where the file should be hard-linked
-    /// ("uplifted") to. For example, `/path/to/project/target`.
-    ///
-    /// `filename_stem` is the base filename without an extension.
-    ///
-    /// This function returns it in two parts so the caller can add
-    /// prefix/suffix to filename separately.
-    ///
-    /// Returns an `Option` because in some cases we don't want to link
-    /// (eg a dependent lib).
-    fn link_stem(&self, unit: &Unit) -> Option<(PathBuf, String)> {
-        let out_dir = self.out_dir(unit);
-        let bin_stem = self.bin_stem(unit); // Stem without metadata.
-        let file_stem = self.file_stem(unit); // Stem with metadata.
-
-        // We currently only lift files up from the `deps` directory. If
-        // it was compiled into something like `example/` or `doc/` then
-        // we don't want to link it up.
-        if out_dir.ends_with("deps") {
-            // Don't lift up library dependencies.
-            if unit.target.is_bin() || self.roots.contains(unit) || unit.target.is_dylib() {
-                Some((
-                    out_dir.parent().unwrap().to_owned(),
-                    if unit.mode.is_any_test() {
-                        file_stem
-                    } else {
-                        bin_stem
-                    },
-                ))
-            } else {
-                None
-            }
-        } else if bin_stem == file_stem {
-            None
-        } else if out_dir.ends_with("examples") || out_dir.parent().unwrap().ends_with("build") {
-            Some((out_dir, bin_stem))
-        } else {
-            None
+        // Only uplift:
+        // - Binaries: The user always wants to see these, even if they are
+        //   implicitly built (for example for integration tests).
+        // - dylibs: This ensures that the dynamic linker pulls in all the
+        //   latest copies (even if the dylib was built from a previous cargo
+        //   build). There are complex reasons for this, see #8139, #6167, #6162.
+        // - Things directly requested from the command-line (the "roots").
+        //   This one is a little questionable for rlibs (see #6131), but is
+        //   historically how Cargo has operated. This is primarily useful to
+        //   give the user access to staticlibs and cdylibs.
+        if !unit.target.is_bin()
+            && !unit.target.is_custom_build()
+            && file_type.crate_type != Some(CrateType::Dylib)
+            && !self.roots.contains(unit)
+        {
+            return None;
         }
+
+        let filename = file_type.uplift_filename(&unit.target);
+        let uplift_path = if unit.target.is_example() {
+            // Examples live in their own little world.
+            self.layout(unit.kind).examples().join(filename)
+        } else if unit.target.is_custom_build() {
+            self.build_script_dir(unit).join(filename)
+        } else {
+            self.layout(unit.kind).dest().join(filename)
+        };
+        if from_path == uplift_path {
+            // This can happen with things like examples that reside in the
+            // same directory, do not have a metadata hash (like on Windows),
+            // and do not have hyphens.
+            return None;
+        }
+        Some(uplift_path)
     }
 
     fn calc_outputs(
@@ -391,16 +379,18 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
         Ok(Arc::new(ret))
     }
 
+    /// Computes the actual, full pathnames for all the files generated by rustc.
+    ///
+    /// The `OutputFile` also contains the paths where those files should be
+    /// "uplifted" to.
     fn calc_outputs_rustc(
         &self,
         unit: &Unit,
         bcx: &BuildContext<'a, 'cfg>,
     ) -> CargoResult<Vec<OutputFile>> {
         let out_dir = self.out_dir(unit);
-        let link_stem = self.link_stem(unit);
-        let info = bcx.target_data.info(unit.kind);
-        let file_stem = self.file_stem(unit);
 
+        let info = bcx.target_data.info(unit.kind);
         let triple = bcx.target_data.short_name(&unit.kind);
         let (file_types, unsupported) =
             info.rustc_outputs(unit.mode, unit.target.kind(), triple)?;
@@ -426,15 +416,9 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
         // Convert FileType to OutputFile.
         let mut outputs = Vec::new();
         for file_type in file_types {
-            let path = out_dir.join(file_type.filename(&file_stem));
-            // Don't create hardlink for tests or rmeta
-            let hardlink = if unit.mode.is_any_test() || file_type.flavor == FileFlavor::Rmeta {
-                None
-            } else {
-                link_stem
-                    .as_ref()
-                    .map(|&(ref ld, ref ls)| ld.join(file_type.filename(ls)))
-            };
+            let meta = self.metas[unit].map(|m| m.to_string());
+            let path = out_dir.join(file_type.output_filename(&unit.target, meta.as_deref()));
+            let hardlink = self.uplift_to(unit, &file_type, &path);
             let export_path = if unit.target.is_custom_build() {
                 None
             } else {

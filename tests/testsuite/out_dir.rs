@@ -91,7 +91,7 @@ fn dynamic_library_with_debug() {
         &p.root().join("out"),
         &["libfoo.so"],
         &["libfoo.dylib", "libfoo.dylib.dSYM"],
-        &["foo.dll", "foo.dll.lib"],
+        &["foo.dll", "foo.dll.exp", "foo.dll.lib", "foo.pdb"],
         &["foo.dll", "libfoo.dll.a"],
     );
 }

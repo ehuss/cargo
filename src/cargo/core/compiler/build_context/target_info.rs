@@ -1,5 +1,5 @@
 use crate::core::compiler::{BuildOutput, CompileKind, CompileMode, CompileTarget, CrateType};
-use crate::core::{Dependency, TargetKind, Workspace};
+use crate::core::{Dependency, Target, TargetKind, Workspace};
 use crate::util::config::{Config, StringList, TargetConfig};
 use crate::util::{CargoResult, CargoResultExt, ProcessBuilder, Rustc};
 use cargo_platform::{Cfg, CfgExpr};
@@ -65,29 +65,45 @@ pub enum FileFlavor {
 pub struct FileType {
     /// The kind of file.
     pub flavor: FileFlavor,
+    /// The crate-type that generates this file.
+    ///
+    /// `None` for things that aren't associated with a specific crate type,
+    /// for example `rmeta` files.
+    pub crate_type: Option<CrateType>,
     /// The suffix for the file (for example, `.rlib`).
     /// This is an empty string for executables on Unix-like platforms.
     suffix: String,
     /// The prefix for the file (for example, `lib`).
     /// This is an empty string for things like executables.
     prefix: String,
-    /// Flag to convert hyphen to underscore.
-    ///
-    /// wasm bin targets will generate two files in deps such as
-    /// "web-stuff.js" and "web_stuff.wasm". Note the different usages of "-"
-    /// and "_". This flag indicates that the stem "web-stuff" should be
-    /// converted to "web_stuff".
+    /// Flag to convert hyphen to underscore when uplifting.
     should_replace_hyphens: bool,
 }
 
 impl FileType {
-    pub fn filename(&self, stem: &str) -> String {
-        let stem = if self.should_replace_hyphens {
-            stem.replace("-", "_")
+    /// The filename for this FileType crated by rustc.
+    pub fn output_filename(&self, target: &Target, metadata: Option<&str>) -> String {
+        match metadata {
+            Some(metadata) => format!(
+                "{}{}-{}{}",
+                self.prefix,
+                target.crate_name(),
+                metadata,
+                self.suffix
+            ),
+            None => format!("{}{}{}", self.prefix, target.crate_name(), self.suffix),
+        }
+    }
+
+    /// The filename for this FileType that Cargo should use when "uplifting"
+    /// it to the destination directory.
+    pub fn uplift_filename(&self, target: &Target) -> String {
+        let name = if self.should_replace_hyphens {
+            target.crate_name()
         } else {
-            stem.to_string()
+            target.name().to_string()
         };
-        format!("{}{}{}", self.prefix, stem, self.suffix)
+        format!("{}{}{}", self.prefix, name, self.suffix)
     }
 
     /// Creates a new instance representing a `.rmeta` file.
@@ -95,9 +111,10 @@ impl FileType {
         // Note that even binaries use the `lib` prefix.
         FileType {
             flavor: FileFlavor::Rmeta,
+            crate_type: None,
             suffix: ".rmeta".to_string(),
             prefix: "lib".to_string(),
-            should_replace_hyphens: false,
+            should_replace_hyphens: true,
         }
     }
 }
@@ -276,52 +293,64 @@ impl TargetInfo {
             suffix: suffix.clone(),
             prefix: prefix.clone(),
             flavor,
-            should_replace_hyphens: false,
+            crate_type: Some(crate_type.clone()),
+            should_replace_hyphens: crate_type != CrateType::Bin,
         }];
 
-        // See rust-lang/cargo#4500.
-        if target_triple.ends_with("-windows-msvc")
-            && (crate_type == CrateType::Dylib || crate_type == CrateType::Cdylib)
-            && suffix == ".dll"
-        {
-            ret.push(FileType {
-                suffix: ".dll.lib".to_string(),
-                prefix: prefix.clone(),
-                flavor: FileFlavor::Normal,
-                should_replace_hyphens: false,
-            })
-        } else if target_triple.ends_with("windows-gnu")
-            && (crate_type == CrateType::Dylib || crate_type == CrateType::Cdylib)
-            && suffix == ".dll"
-        {
-            // LD can link DLL directly, but LLD requires the import library.
-            ret.push(FileType {
-                suffix: ".dll.a".to_string(),
-                prefix: "lib".to_string(),
-                flavor: FileFlavor::Normal,
-                should_replace_hyphens: false,
-            })
+        // Window shared library import/export files.
+        if crate_type.is_dynamic() {
+            if target_triple.ends_with("-windows-msvc") {
+                assert!(suffix == ".dll");
+                // See https://docs.microsoft.com/en-us/cpp/build/reference/working-with-import-libraries-and-export-files
+                // for more information about DLL import/export files.
+                ret.push(FileType {
+                    suffix: ".dll.lib".to_string(),
+                    prefix: prefix.clone(),
+                    flavor: FileFlavor::Auxiliary,
+                    crate_type: Some(crate_type.clone()),
+                    should_replace_hyphens: true,
+                });
+                // NOTE: lld does not produce these
+                ret.push(FileType {
+                    suffix: ".dll.exp".to_string(),
+                    prefix: prefix.clone(),
+                    flavor: FileFlavor::Auxiliary,
+                    crate_type: Some(crate_type.clone()),
+                    should_replace_hyphens: true,
+                });
+            } else if target_triple.ends_with("windows-gnu") {
+                assert!(suffix == ".dll");
+                // See https://cygwin.com/cygwin-ug-net/dll.html for more
+                // information about GNU import libraries.
+                // LD can link DLL directly, but LLD requires the import library.
+                ret.push(FileType {
+                    suffix: ".dll.a".to_string(),
+                    prefix: "lib".to_string(),
+                    flavor: FileFlavor::Auxiliary,
+                    crate_type: Some(crate_type.clone()),
+                    should_replace_hyphens: true,
+                })
+            }
         }
 
-        // See rust-lang/cargo#4535.
         if target_triple.starts_with("wasm32-") && crate_type == CrateType::Bin && suffix == ".js" {
+            // emscripten binaries generate a .js file, which loads a .wasm
+            // file.
             ret.push(FileType {
                 suffix: ".wasm".to_string(),
                 prefix: prefix.clone(),
                 flavor: FileFlavor::Auxiliary,
+                crate_type: Some(crate_type.clone()),
+                // Name `foo-bar` will generate a `foo_bar.js` and
+                // `foo_bar.wasm`. Cargo will translate the underscore and
+                // copy `foo_bar.js` to `foo-bar.js`. However, the wasm
+                // filename is embedded in the .js file with an underscore, so
+                // it should not contain hyphens.
                 should_replace_hyphens: true,
             })
         }
 
-        // See rust-lang/cargo#4490, rust-lang/cargo#4960.
-        // Only uplift debuginfo for binaries.
-        // - Tests are run directly from `target/debug/deps/` with the
-        //   metadata hash still in the filename.
-        // - Examples are only uplifted for apple because the symbol file
-        //   needs to match the executable file name to be found (i.e., it
-        //   needs to remove the hash in the filename). On Windows, the path
-        //   to the .pdb with the hash is embedded in the executable, and
-        //   executables have no hash.
+        // Handle separate debug files.
         let is_apple = target_triple.contains("-apple-");
         if matches!(
             crate_type,
@@ -337,6 +366,13 @@ impl TargetInfo {
                     suffix,
                     prefix: prefix.clone(),
                     flavor: FileFlavor::DebugInfo,
+                    crate_type: Some(crate_type.clone()),
+                    // macOS tools like lldb use all sorts of magic to locate
+                    // dSYM files. See https://lldb.llvm.org/use/symbols.html
+                    // for some details. It seems like a `.dSYM` located next
+                    // to the executable with the same name is one method. The
+                    // dSYM should have the same hyphens as the executable for
+                    // the names to match.
                     should_replace_hyphens: false,
                 })
             } else if target_triple.ends_with("-msvc") {
@@ -344,8 +380,13 @@ impl TargetInfo {
                     suffix: ".pdb".to_string(),
                     prefix: prefix.clone(),
                     flavor: FileFlavor::DebugInfo,
-                    // rustc calls the linker with underscores, and the
-                    // filename is embedded in the executable.
+                    crate_type: Some(crate_type.clone()),
+                    // The absolute path to the pdb file is embedded in the
+                    // executable. If the exe/pdb pair is moved to another
+                    // machine, then debuggers will look in the same directory
+                    // of the exe with the original pdb filename. Since the
+                    // original name contains underscores, they need to be
+                    // preserved.
                     should_replace_hyphens: true,
                 })
             }
