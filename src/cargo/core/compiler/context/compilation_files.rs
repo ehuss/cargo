@@ -282,8 +282,7 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
 
     /// Returns the filenames that the given unit will generate.
     ///
-    /// Note: It is not guaranteed that all of the files will have been
-    /// generated.
+    /// Note: It is not guaranteed that all of the files will be generated.
     pub(super) fn outputs(
         &self,
         unit: &Unit,

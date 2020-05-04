@@ -769,14 +769,6 @@ impl Target {
         }
     }
 
-    /// Whether or not this target allows dashes in its filename.
-    ///
-    /// Rustc will always emit filenames with underscores, and Cargo will
-    /// rename them back to dashes if this is true.
-    pub fn allows_dashes(&self) -> bool {
-        self.is_bin() || self.is_example() || self.is_custom_build()
-    }
-
     pub fn is_lib(&self) -> bool {
         match self.kind() {
             TargetKind::Lib(_) => true,
