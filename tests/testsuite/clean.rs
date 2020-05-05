@@ -406,38 +406,78 @@ fn package_cleans_all_the_things() {
         .run();
     p.cargo("clean -p foo-bar --target").arg(rustc_host()).run();
     assert_all_clean(&p.build_dir());
+}
 
-    // Ensures that all files for the package have been deleted.
-    fn assert_all_clean(build_dir: &Path) {
-        let walker = walkdir::WalkDir::new(build_dir).into_iter();
-        for entry in walker.filter_entry(|e| {
-            let path = e.path();
-            // This is a known limitation, clean can't differentiate between
-            // the different build scripts from different packages.
-            !(path
+// Ensures that all files for the package have been deleted.
+fn assert_all_clean(build_dir: &Path) {
+    let walker = walkdir::WalkDir::new(build_dir).into_iter();
+    for entry in walker.filter_entry(|e| {
+        let path = e.path();
+        // This is a known limitation, clean can't differentiate between
+        // the different build scripts from different packages.
+        !(path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("build_script_build")
+            && path
+                .parent()
+                .unwrap()
                 .file_name()
                 .unwrap()
                 .to_str()
                 .unwrap()
-                .starts_with("build_script_build")
-                && path
-                    .parent()
-                    .unwrap()
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    == "incremental")
-        }) {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            if let ".rustc_info.json" | ".cargo-lock" = path.file_name().unwrap().to_str().unwrap()
-            {
-                continue;
-            }
-            if path.is_symlink() || path.is_file() {
-                panic!("{:?} was not cleaned", path);
-            }
+                == "incremental")
+    }) {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if let ".rustc_info.json" | ".cargo-lock" = path.file_name().unwrap().to_str().unwrap() {
+            continue;
         }
+        if path.is_symlink() || path.is_file() {
+            panic!("{:?} was not cleaned", path);
+        }
+    }
+}
+
+#[cargo_test]
+fn clean_spec_multiple() {
+    // clean -p foo where foo matches multiple versions
+    Package::new("bar", "1.0.0").publish();
+    Package::new("bar", "2.0.0").publish();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+            [package]
+            name = "foo"
+            version = "0.1.0"
+
+            [dependencies]
+            bar1 = {version="1.0", package="bar"}
+            bar2 = {version="2.0", package="bar"}
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("build").run();
+    p.cargo("clean -p bar:1.0.0")
+        .with_stderr(
+            "warning: version qualifier in `-p bar:1.0.0` is ignored, \
+            cleaning all versions of `bar` found",
+        )
+        .run();
+    let mut walker = walkdir::WalkDir::new(p.build_dir())
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let n = e.file_name().to_str().unwrap();
+            n.starts_with("bar") || n.starts_with("libbar")
+        });
+    if let Some(e) = walker.next() {
+        panic!("{:?} was not cleaned", e.path());
     }
 }

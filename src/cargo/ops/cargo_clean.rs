@@ -1,6 +1,6 @@
 use crate::core::compiler::{CompileKind, CompileMode, Layout, RustcTargetData};
 use crate::core::profiles::Profiles;
-use crate::core::{InternedString, Workspace};
+use crate::core::{InternedString, PackageIdSpec, Workspace};
 use crate::ops;
 use crate::util::errors::{CargoResult, CargoResultExt};
 use crate::util::paths;
@@ -90,10 +90,35 @@ pub fn clean(ws: &Workspace<'_>, opts: &CleanOptions<'_>) -> CargoResult<()> {
     // remove it (otherwise you're left with lots of broken links).
     // Doc tests produce no output.
 
-    for spec in opts.spec.iter() {
-        // Translate the spec to a Package
-        let pkgid = resolve.query(spec)?;
-        let pkg = pkg_set.get_one(pkgid)?;
+    // Get Packages for the specified specs.
+    let mut packages = Vec::new();
+    for spec_str in opts.spec.iter() {
+        // Translate the spec to a Package.
+        let spec = PackageIdSpec::parse(spec_str)?;
+        if spec.version().is_some() {
+            config.shell().warn(&format!(
+                "version qualifier in `-p {}` is ignored, \
+                cleaning all versions of `{}` found",
+                spec_str,
+                spec.name()
+            ))?;
+        }
+        if spec.url().is_some() {
+            config.shell().warn(&format!(
+                "url qualifier in `-p {}` ignored, \
+                cleaning all versions of `{}` found",
+                spec_str,
+                spec.name()
+            ))?;
+        }
+        let matches: Vec<_> = resolve.iter().filter(|id| spec.matches(*id)).collect();
+        if matches.is_empty() {
+            anyhow::bail!("package ID specification `{}` matched no packages", spec);
+        }
+        packages.extend(pkg_set.get_many(matches)?);
+    }
+
+    for pkg in packages {
         let pkg_dir = format!("{}-*", pkg.name());
 
         // Clean fingerprints.
@@ -150,8 +175,6 @@ pub fn clean(ws: &Workspace<'_>, opts: &CleanOptions<'_>) -> CargoResult<()> {
                     let incremental = layout.incremental().join(format!("{}-*", crate_name));
                     rm_rf_glob(&incremental, config)?;
                 }
-                // TODO:
-                // - .metabuild?
             }
         }
     }
