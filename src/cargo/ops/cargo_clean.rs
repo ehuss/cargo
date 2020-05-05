@@ -128,8 +128,6 @@ pub fn clean(ws: &Workspace<'_>, opts: &CleanOptions<'_>) -> CargoResult<()> {
                     };
                     for file_type in file_types {
                         // Some files include a hash in the filename, some don't.
-                        // The rules are complex and convoluted. It's easier just
-                        // to blindly try to delete both.
                         let hashed_name = file_type.output_filename(target, Some("*"));
                         let unhashed_name = file_type.output_filename(target, None);
                         rm_rf_glob(&dir.join(&hashed_name), config)?;

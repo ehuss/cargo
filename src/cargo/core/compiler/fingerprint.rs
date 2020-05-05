@@ -93,8 +93,7 @@
 //!
 //! Fingerprint information is stored in the
 //! `target/{debug,release}/.fingerprint/` directory. Each Unit is stored in a
-//! separate directory (except units without a `Metadata`, which are all in
-//! the same directory). Each Unit directory contains:
+//! separate directory. Each Unit directory contains:
 //!
 //! - A file with a 16 hex-digit hash. This is the Fingerprint hash, used for
 //!   quick loading and comparison.
