@@ -43,8 +43,8 @@
 //! The `Metadata` hash is a hash added to the output filenames to isolate
 //! each unit. See the documentation in the `compilation_files` module for
 //! more details. NOTE: Not all output files are isolated via filename hashes
-//! (like dylibs), but the fingerprint directory always has a hash in its
-//! directory name.
+//! (like dylibs), but the fingerprint directory always has the `Metadata`
+//! hash in its directory name.
 //!
 //! Fingerprints and Metadata are similar, and track some of the same things.
 //! The Metadata contains information that is required to keep Units separate.

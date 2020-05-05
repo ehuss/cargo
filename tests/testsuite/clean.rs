@@ -363,20 +363,26 @@ fn package_cleans_all_the_things() {
             crate-type = ["rlib", "dylib", "staticlib"]
 
             [[example]]
-            name = "foo-ex1-cdylib"
+            name = "foo-ex-rlib"
+            crate-type = ["rlib"]
+            test = true
+
+            [[example]]
+            name = "foo-ex-cdylib"
             crate-type = ["cdylib"]
             test = true
 
             [[example]]
-            name = "foo-ex2-bin"
+            name = "foo-ex-bin"
             test = true
             "#,
         )
         .file("src/lib.rs", "")
         .file("src/main.rs", "fn main() {}")
         .file("src/bin/other-main.rs", "fn main() {}")
-        .file("examples/foo-ex1-cdylib.rs", "")
-        .file("examples/foo-ex2-bin.rs", "fn main() {}")
+        .file("examples/foo-ex-rlib.rs", "")
+        .file("examples/foo-ex-cdylib.rs", "")
+        .file("examples/foo-ex-bin.rs", "fn main() {}")
         .file("tests/foo-test.rs", "")
         .file("benches/foo-bench.rs", "")
         .file("build.rs", "fn main() {}")

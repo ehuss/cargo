@@ -191,6 +191,8 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
     }
 
     /// Directory name to use for a package in the form `NAME-HASH`.
+    ///
+    /// The hash is unique per Unit.
     pub fn pkg_dir(&self, unit: &Unit) -> String {
         let name = unit.pkg.package_id().name();
         format!("{}-{}", name, self.metas[unit])
