@@ -85,10 +85,7 @@ pub struct CompilationFiles<'a, 'cfg> {
     roots: Vec<Unit>,
     ws: &'a Workspace<'cfg>,
     /// Metadata hash to use for each unit.
-    ///
-    /// `None` if the unit should not use a metadata data hash (like rustdoc,
-    /// or some dylibs).
-    metas: HashMap<Unit, Option<Metadata>>,
+    metas: HashMap<Unit, Metadata>,
     /// For each Unit, a list all files produced.
     outputs: HashMap<Unit, LazyCell<Arc<Vec<OutputFile>>>>,
 }
@@ -151,15 +148,18 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
         }
     }
 
-    /// Gets the metadata for a target in a specific profile.
-    /// We build to the path `"{filename}-{target_metadata}"`.
-    /// We use a linking step to link/copy to a predictable filename
-    /// like `target/debug/libfoo.{a,so,rlib}` and such.
+    /// Gets the metadata for the given unit.
     ///
-    /// Returns `None` if the unit should not use a metadata data hash (like
+    /// See module docs for more details.
+    ///
+    /// Returns `None` if the unit should not use a metadata hash (like
     /// rustdoc, or some dylibs).
-    pub fn metadata(&self, unit: &Unit) -> Option<Metadata> {
-        self.metas[unit]
+    pub fn metadata(&self, bcx: &BuildContext<'_, '_>, unit: &Unit) -> Option<Metadata> {
+        if should_use_metadata(bcx, unit) {
+            Some(self.metas[unit])
+        } else {
+            None
+        }
     }
 
     /// Gets the short hash based only on the `PackageId`.
@@ -193,10 +193,7 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
     /// Directory name to use for a package in the form `NAME-HASH`.
     pub fn pkg_dir(&self, unit: &Unit) -> String {
         let name = unit.pkg.package_id().name();
-        match self.metas[unit] {
-            Some(ref meta) => format!("{}-{}", name, meta),
-            None => format!("{}-{}", name, self.target_short_hash(unit)),
-        }
+        format!("{}-{}", name, self.metas[unit])
     }
 
     /// Returns the root of the build output tree for the host
@@ -415,7 +412,7 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
         // Convert FileType to OutputFile.
         let mut outputs = Vec::new();
         for file_type in file_types {
-            let meta = self.metas[unit].map(|m| m.to_string());
+            let meta = self.metadata(bcx, unit).map(|m| m.to_string());
             let path = out_dir.join(file_type.output_filename(&unit.target, meta.as_deref()));
             let hardlink = self.uplift_to(unit, &file_type, &path);
             let export_path = if unit.target.is_custom_build() {
@@ -438,11 +435,7 @@ impl<'a, 'cfg: 'a> CompilationFiles<'a, 'cfg> {
     }
 }
 
-fn metadata_of(
-    unit: &Unit,
-    cx: &Context<'_, '_>,
-    metas: &mut HashMap<Unit, Option<Metadata>>,
-) -> Option<Metadata> {
+fn metadata_of(unit: &Unit, cx: &Context<'_, '_>, metas: &mut HashMap<Unit, Metadata>) -> Metadata {
     if !metas.contains_key(unit) {
         let meta = compute_metadata(unit, cx, metas);
         metas.insert(unit.clone(), meta);
@@ -456,48 +449,9 @@ fn metadata_of(
 fn compute_metadata(
     unit: &Unit,
     cx: &Context<'_, '_>,
-    metas: &mut HashMap<Unit, Option<Metadata>>,
-) -> Option<Metadata> {
-    if unit.mode.is_doc_test() {
-        // Doc tests do not have metadata.
-        return None;
-    }
-    // No metadata for dylibs because of a couple issues:
-    // - macOS encodes the dylib name in the executable,
-    // - Windows rustc multiple files of which we can't easily link all of them.
-    //
-    // No metadata for bin because of an issue:
-    // - wasm32 rustc/emcc encodes the `.wasm` name in the `.js` (rust-lang/cargo#4535).
-    // - msvc: The path to the PDB is embedded in the executable, and we don't
-    //   want the PDB path to include the hash in it.
-    //
-    // Two exceptions:
-    // 1) Upstream dependencies (we aren't exporting + need to resolve name conflict),
-    // 2) `__CARGO_DEFAULT_LIB_METADATA` env var.
-    //
-    // Note, however, that the compiler's build system at least wants
-    // path dependencies (eg libstd) to have hashes in filenames. To account for
-    // that we have an extra hack here which reads the
-    // `__CARGO_DEFAULT_LIB_METADATA` environment variable and creates a
-    // hash in the filename if that's present.
-    //
-    // This environment variable should not be relied on! It's
-    // just here for rustbuild. We need a more principled method
-    // doing this eventually.
+    metas: &mut HashMap<Unit, Metadata>,
+) -> Metadata {
     let bcx = &cx.bcx;
-    let __cargo_default_lib_metadata = env::var("__CARGO_DEFAULT_LIB_METADATA");
-    let short_name = bcx.target_data.short_name(&unit.kind);
-    if !(unit.mode.is_any_test() || unit.mode.is_check())
-        && (unit.target.is_dylib()
-            || unit.target.is_cdylib()
-            || (unit.target.is_executable() && short_name.starts_with("wasm32-"))
-            || (unit.target.is_executable() && short_name.contains("msvc")))
-        && unit.pkg.package_id().source_id().is_path()
-        && __cargo_default_lib_metadata.is_err()
-    {
-        return None;
-    }
-
     let mut hasher = SipHasher::new();
 
     // This is a generic version number that can be changed to make
@@ -557,7 +511,7 @@ fn compute_metadata(
 
     // Seed the contents of `__CARGO_DEFAULT_LIB_METADATA` to the hasher if present.
     // This should be the release channel, to get a different hash for each channel.
-    if let Ok(ref channel) = __cargo_default_lib_metadata {
+    if let Ok(ref channel) = env::var("__CARGO_DEFAULT_LIB_METADATA") {
         channel.hash(&mut hasher);
     }
 
@@ -570,7 +524,7 @@ fn compute_metadata(
     // with user dependencies.
     unit.is_std.hash(&mut hasher);
 
-    Some(Metadata(hasher.finish()))
+    Metadata(hasher.finish())
 }
 
 fn hash_rustc_version(bcx: &BuildContext<'_, '_>, hasher: &mut SipHasher) {
@@ -603,4 +557,47 @@ fn hash_rustc_version(bcx: &BuildContext<'_, '_>, hasher: &mut SipHasher) {
     // The backend version ("LLVM version") might become more relevant in
     // the future when cranelift sees more use, and people want to switch
     // between different backends without recompiling.
+}
+
+/// Returns whether or not this unit should use a metadata hash.
+fn should_use_metadata(bcx: &BuildContext<'_, '_>, unit: &Unit) -> bool {
+    if unit.mode.is_doc_test() {
+        // Doc tests do not have metadata.
+        return false;
+    }
+    if unit.mode.is_any_test() || unit.mode.is_check() {
+        // These always use metadata.
+        return true;
+    }
+    // No metadata in these cases:
+    //
+    // - dylibs:
+    //   - macOS encodes the dylib name in the executable, so it can't be renamed.
+    //   - TODO: Are there other good reasons? If not, maybe this should be macos specific?
+    // - Windows MSVC executables: The path to the PDB is embedded in the
+    //   executable, and we don't want the PDB path to include the hash in it.
+    // - wasm32 executables: When using emscripten, the path to the .wasm file
+    //   is embedded in the .js file, so we don't want the hash in there.
+    //   TODO: Is this necessary for wasm32-unknown-unknown?
+    //
+    // This is only done for local packages, as we don't expect to export
+    // dependencies.
+    //
+    // The __CARGO_DEFAULT_LIB_METADATA env var is used to override this to
+    // force metadata in the hash. This is only used for building libstd. For
+    // example, if libstd is placed in a common location, we don't want a file
+    // named /usr/lib/libstd.so which could conflict with other rustc
+    // installs. TODO: Is this still a realistic concern?
+    // See https://github.com/rust-lang/cargo/issues/3005
+    let short_name = bcx.target_data.short_name(&unit.kind);
+    if (unit.target.is_dylib()
+        || unit.target.is_cdylib()
+        || (unit.target.is_executable() && short_name.starts_with("wasm32-"))
+        || (unit.target.is_executable() && short_name.contains("msvc")))
+        && unit.pkg.package_id().source_id().is_path()
+        && env::var("__CARGO_DEFAULT_LIB_METADATA").is_err()
+    {
+        return false;
+    }
+    true
 }
