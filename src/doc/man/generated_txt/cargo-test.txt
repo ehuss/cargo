@@ -318,6 +318,13 @@ OPTIONS
            <https://doc.rust-lang.org/cargo/reference/config.html>.
 
    Common Options
+       +TOOLCHAIN
+           If Cargo has been installed with rustup, and the first argument to
+           cargo begins with +, it will be interpreted as a rustup toolchain
+           name (such as +stable or +nightly). See the  rustup documentation
+           <https://github.com/rust-lang/rustup/> for more information about
+           how toolchain overrides work.
+
        -h, --help
            Prints help information.
 
@@ -399,4 +406,4 @@ SEE ALSO
 
 
 
-                                  2020-02-19                     CARGO-TEST(1)
+                                  2020-07-06                     CARGO-TEST(1)
