@@ -13,16 +13,22 @@ MAN_SOURCE = $(sort $(wildcard man/cargo*.adoc))
 COMMANDS = $(notdir $(MAN_SOURCE))
 HTML = $(patsubst %.adoc,man/generated/%.html,$(COMMANDS))
 MAN_LOCATION = ../etc/man
+MAN_TXT_LOCATION = man/generated_txt
 MAN = $(patsubst %.adoc,$(MAN_LOCATION)/%.1,$(COMMANDS))
+MAN_TXT = $(patsubst %.adoc,$(MAN_TXT_LOCATION)/%.txt,$(COMMANDS))
 ASCIIDOCOPTS = -r ./asciidoc-extension.rb
 OTHER_DEPS = asciidoc-extension.rb $(filter-out $(MAN_SOURCE),$(sort $(wildcard man/*.adoc)))
 
-all: commands-html man
+all: commands-html man man_txt
 commands-html: $(HTML)
 man: $(MAN)
+man_txt: $(MAN_TXT)
 
 $(HTML): man/generated/%.html : man/%.adoc asciidoc-extension.rb $(OTHER_DEPS)
 	asciidoctor $(ASCIIDOCOPTS) -s $< -o $@
 
 $(MAN): $(MAN_LOCATION)/%.1 : man/%.adoc $(OTHER_DEPS)
 	asciidoctor $(ASCIIDOCOPTS) -b manpage $< -o $@
+
+$(MAN_TXT): $(MAN_TXT_LOCATION)/%.txt : $(MAN_LOCATION)/%.1
+	man $< | col -bx > $@
