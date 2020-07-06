@@ -116,3 +116,7 @@ jobs:
           https://raw.githubusercontent.com/rust-lang/rust/master/src/tools/linkchecker/linkcheck.sh
         sh linkcheck.sh --all cargo
       displayName: "Check for broken links"
+    - bash: sudo apt install asciidoctor
+      displayName: "Install asciidoctor"
+    - bash: ci/validate-man.sh
+      displayName: "Check for changes to man pages"

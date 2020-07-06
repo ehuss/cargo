@@ -16,7 +16,9 @@ MAN_LOCATION = ../etc/man
 MAN_TXT_LOCATION = man/generated_txt
 MAN = $(patsubst %.adoc,$(MAN_LOCATION)/%.1,$(COMMANDS))
 MAN_TXT = $(patsubst %.adoc,$(MAN_TXT_LOCATION)/%.txt,$(COMMANDS))
-ASCIIDOCOPTS = -r ./asciidoc-extension.rb
+# "reproducible" prevents embedding the date. The date can cause unnecessary
+# churn when no other contents have changed.
+ASCIIDOCOPTS = -r ./asciidoc-extension.rb -a reproducible
 OTHER_DEPS = asciidoc-extension.rb $(filter-out $(MAN_SOURCE),$(sort $(wildcard man/*.adoc)))
 
 all: commands-html man man_txt
