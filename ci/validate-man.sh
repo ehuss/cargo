@@ -20,7 +20,9 @@ touch man/*.adoc
 changes=$(git status --porcelain .)
 if [ -n "$changes" ]
 then
-    echo "git directory must be clean before running this script."
+    echo "git directory must be clean before running this script:"
+    echo "$changes"
+    git diff
     exit 1
 fi
 
@@ -30,6 +32,8 @@ if [ -n "$changes" ]
 then
     echo "Detected changes in man pages:"
     echo "$changes"
+    echo
+    git diff
     echo
     echo "Please run 'make' in the src/doc directory to rebuild the man pages."
     exit 1
