@@ -61,6 +61,7 @@ impl BuildStd for Execs {
 
 #[cargo_test(build_std)]
 fn basic() {
+    eprintln!("basic");
     let p = project()
         .file(
             "src/main.rs",
@@ -116,10 +117,12 @@ fn basic() {
         .join("deps");
     assert!(p.glob(deps_dir.join("*.rlib")).count() > 0);
     assert_eq!(p.glob(deps_dir.join("*.dylib")).count(), 0);
+    eprintln!("basic success");
 }
 
 #[cargo_test(build_std)]
 fn cross_custom() {
+    eprintln!("cross custom");
     let p = project()
         .file(
             "Cargo.toml",
@@ -159,10 +162,12 @@ fn cross_custom() {
     p.cargo("build --target custom-target.json -v")
         .build_std_arg("core")
         .run();
+    eprintln!("cross custom success");
 }
 
 #[cargo_test(build_std)]
 fn custom_test_framework() {
+    eprintln!("custom_test_framework");
     let p = project()
         .file(
             "src/lib.rs",
@@ -217,4 +222,5 @@ fn custom_test_framework() {
         .env("PATH", new_path)
         .build_std_arg("core")
         .run();
+    eprintln!("custom_test_framework success");
 }
