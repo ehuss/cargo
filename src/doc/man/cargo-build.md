@@ -5,6 +5,8 @@
 
 cargo-build - Compile the current package
 
+foo
+
 ## SYNOPSIS
 
 `cargo build` [_options_]
