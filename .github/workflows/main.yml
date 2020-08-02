@@ -53,6 +53,7 @@ jobs:
         #   other: i686-pc-windows-gnu
     steps:
     - uses: actions/checkout@v2
+    - run: cat /proc/cpuinfo || true
     - run: rustup update --no-self-update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
     # - run: rustup target add ${{ matrix.other }}
     # - run: rustup component add rustc-dev llvm-tools-preview rust-docs
