@@ -4935,6 +4935,4007 @@ fn user_specific_cfgs_are_filtered_out() {
     p.process(&p.bin("foo")).run();
 }
 
+#[test]
+fn close_output0() {
+    close_output();
+}
+#[test]
+fn close_output1() {
+    close_output();
+}
+#[test]
+fn close_output2() {
+    close_output();
+}
+#[test]
+fn close_output3() {
+    close_output();
+}
+#[test]
+fn close_output4() {
+    close_output();
+}
+#[test]
+fn close_output5() {
+    close_output();
+}
+#[test]
+fn close_output6() {
+    close_output();
+}
+#[test]
+fn close_output7() {
+    close_output();
+}
+#[test]
+fn close_output8() {
+    close_output();
+}
+#[test]
+fn close_output9() {
+    close_output();
+}
+#[test]
+fn close_output10() {
+    close_output();
+}
+#[test]
+fn close_output11() {
+    close_output();
+}
+#[test]
+fn close_output12() {
+    close_output();
+}
+#[test]
+fn close_output13() {
+    close_output();
+}
+#[test]
+fn close_output14() {
+    close_output();
+}
+#[test]
+fn close_output15() {
+    close_output();
+}
+#[test]
+fn close_output16() {
+    close_output();
+}
+#[test]
+fn close_output17() {
+    close_output();
+}
+#[test]
+fn close_output18() {
+    close_output();
+}
+#[test]
+fn close_output19() {
+    close_output();
+}
+#[test]
+fn close_output20() {
+    close_output();
+}
+#[test]
+fn close_output21() {
+    close_output();
+}
+#[test]
+fn close_output22() {
+    close_output();
+}
+#[test]
+fn close_output23() {
+    close_output();
+}
+#[test]
+fn close_output24() {
+    close_output();
+}
+#[test]
+fn close_output25() {
+    close_output();
+}
+#[test]
+fn close_output26() {
+    close_output();
+}
+#[test]
+fn close_output27() {
+    close_output();
+}
+#[test]
+fn close_output28() {
+    close_output();
+}
+#[test]
+fn close_output29() {
+    close_output();
+}
+#[test]
+fn close_output30() {
+    close_output();
+}
+#[test]
+fn close_output31() {
+    close_output();
+}
+#[test]
+fn close_output32() {
+    close_output();
+}
+#[test]
+fn close_output33() {
+    close_output();
+}
+#[test]
+fn close_output34() {
+    close_output();
+}
+#[test]
+fn close_output35() {
+    close_output();
+}
+#[test]
+fn close_output36() {
+    close_output();
+}
+#[test]
+fn close_output37() {
+    close_output();
+}
+#[test]
+fn close_output38() {
+    close_output();
+}
+#[test]
+fn close_output39() {
+    close_output();
+}
+#[test]
+fn close_output40() {
+    close_output();
+}
+#[test]
+fn close_output41() {
+    close_output();
+}
+#[test]
+fn close_output42() {
+    close_output();
+}
+#[test]
+fn close_output43() {
+    close_output();
+}
+#[test]
+fn close_output44() {
+    close_output();
+}
+#[test]
+fn close_output45() {
+    close_output();
+}
+#[test]
+fn close_output46() {
+    close_output();
+}
+#[test]
+fn close_output47() {
+    close_output();
+}
+#[test]
+fn close_output48() {
+    close_output();
+}
+#[test]
+fn close_output49() {
+    close_output();
+}
+#[test]
+fn close_output50() {
+    close_output();
+}
+#[test]
+fn close_output51() {
+    close_output();
+}
+#[test]
+fn close_output52() {
+    close_output();
+}
+#[test]
+fn close_output53() {
+    close_output();
+}
+#[test]
+fn close_output54() {
+    close_output();
+}
+#[test]
+fn close_output55() {
+    close_output();
+}
+#[test]
+fn close_output56() {
+    close_output();
+}
+#[test]
+fn close_output57() {
+    close_output();
+}
+#[test]
+fn close_output58() {
+    close_output();
+}
+#[test]
+fn close_output59() {
+    close_output();
+}
+#[test]
+fn close_output60() {
+    close_output();
+}
+#[test]
+fn close_output61() {
+    close_output();
+}
+#[test]
+fn close_output62() {
+    close_output();
+}
+#[test]
+fn close_output63() {
+    close_output();
+}
+#[test]
+fn close_output64() {
+    close_output();
+}
+#[test]
+fn close_output65() {
+    close_output();
+}
+#[test]
+fn close_output66() {
+    close_output();
+}
+#[test]
+fn close_output67() {
+    close_output();
+}
+#[test]
+fn close_output68() {
+    close_output();
+}
+#[test]
+fn close_output69() {
+    close_output();
+}
+#[test]
+fn close_output70() {
+    close_output();
+}
+#[test]
+fn close_output71() {
+    close_output();
+}
+#[test]
+fn close_output72() {
+    close_output();
+}
+#[test]
+fn close_output73() {
+    close_output();
+}
+#[test]
+fn close_output74() {
+    close_output();
+}
+#[test]
+fn close_output75() {
+    close_output();
+}
+#[test]
+fn close_output76() {
+    close_output();
+}
+#[test]
+fn close_output77() {
+    close_output();
+}
+#[test]
+fn close_output78() {
+    close_output();
+}
+#[test]
+fn close_output79() {
+    close_output();
+}
+#[test]
+fn close_output80() {
+    close_output();
+}
+#[test]
+fn close_output81() {
+    close_output();
+}
+#[test]
+fn close_output82() {
+    close_output();
+}
+#[test]
+fn close_output83() {
+    close_output();
+}
+#[test]
+fn close_output84() {
+    close_output();
+}
+#[test]
+fn close_output85() {
+    close_output();
+}
+#[test]
+fn close_output86() {
+    close_output();
+}
+#[test]
+fn close_output87() {
+    close_output();
+}
+#[test]
+fn close_output88() {
+    close_output();
+}
+#[test]
+fn close_output89() {
+    close_output();
+}
+#[test]
+fn close_output90() {
+    close_output();
+}
+#[test]
+fn close_output91() {
+    close_output();
+}
+#[test]
+fn close_output92() {
+    close_output();
+}
+#[test]
+fn close_output93() {
+    close_output();
+}
+#[test]
+fn close_output94() {
+    close_output();
+}
+#[test]
+fn close_output95() {
+    close_output();
+}
+#[test]
+fn close_output96() {
+    close_output();
+}
+#[test]
+fn close_output97() {
+    close_output();
+}
+#[test]
+fn close_output98() {
+    close_output();
+}
+#[test]
+fn close_output99() {
+    close_output();
+}
+#[test]
+fn close_output100() {
+    close_output();
+}
+#[test]
+fn close_output101() {
+    close_output();
+}
+#[test]
+fn close_output102() {
+    close_output();
+}
+#[test]
+fn close_output103() {
+    close_output();
+}
+#[test]
+fn close_output104() {
+    close_output();
+}
+#[test]
+fn close_output105() {
+    close_output();
+}
+#[test]
+fn close_output106() {
+    close_output();
+}
+#[test]
+fn close_output107() {
+    close_output();
+}
+#[test]
+fn close_output108() {
+    close_output();
+}
+#[test]
+fn close_output109() {
+    close_output();
+}
+#[test]
+fn close_output110() {
+    close_output();
+}
+#[test]
+fn close_output111() {
+    close_output();
+}
+#[test]
+fn close_output112() {
+    close_output();
+}
+#[test]
+fn close_output113() {
+    close_output();
+}
+#[test]
+fn close_output114() {
+    close_output();
+}
+#[test]
+fn close_output115() {
+    close_output();
+}
+#[test]
+fn close_output116() {
+    close_output();
+}
+#[test]
+fn close_output117() {
+    close_output();
+}
+#[test]
+fn close_output118() {
+    close_output();
+}
+#[test]
+fn close_output119() {
+    close_output();
+}
+#[test]
+fn close_output120() {
+    close_output();
+}
+#[test]
+fn close_output121() {
+    close_output();
+}
+#[test]
+fn close_output122() {
+    close_output();
+}
+#[test]
+fn close_output123() {
+    close_output();
+}
+#[test]
+fn close_output124() {
+    close_output();
+}
+#[test]
+fn close_output125() {
+    close_output();
+}
+#[test]
+fn close_output126() {
+    close_output();
+}
+#[test]
+fn close_output127() {
+    close_output();
+}
+#[test]
+fn close_output128() {
+    close_output();
+}
+#[test]
+fn close_output129() {
+    close_output();
+}
+#[test]
+fn close_output130() {
+    close_output();
+}
+#[test]
+fn close_output131() {
+    close_output();
+}
+#[test]
+fn close_output132() {
+    close_output();
+}
+#[test]
+fn close_output133() {
+    close_output();
+}
+#[test]
+fn close_output134() {
+    close_output();
+}
+#[test]
+fn close_output135() {
+    close_output();
+}
+#[test]
+fn close_output136() {
+    close_output();
+}
+#[test]
+fn close_output137() {
+    close_output();
+}
+#[test]
+fn close_output138() {
+    close_output();
+}
+#[test]
+fn close_output139() {
+    close_output();
+}
+#[test]
+fn close_output140() {
+    close_output();
+}
+#[test]
+fn close_output141() {
+    close_output();
+}
+#[test]
+fn close_output142() {
+    close_output();
+}
+#[test]
+fn close_output143() {
+    close_output();
+}
+#[test]
+fn close_output144() {
+    close_output();
+}
+#[test]
+fn close_output145() {
+    close_output();
+}
+#[test]
+fn close_output146() {
+    close_output();
+}
+#[test]
+fn close_output147() {
+    close_output();
+}
+#[test]
+fn close_output148() {
+    close_output();
+}
+#[test]
+fn close_output149() {
+    close_output();
+}
+#[test]
+fn close_output150() {
+    close_output();
+}
+#[test]
+fn close_output151() {
+    close_output();
+}
+#[test]
+fn close_output152() {
+    close_output();
+}
+#[test]
+fn close_output153() {
+    close_output();
+}
+#[test]
+fn close_output154() {
+    close_output();
+}
+#[test]
+fn close_output155() {
+    close_output();
+}
+#[test]
+fn close_output156() {
+    close_output();
+}
+#[test]
+fn close_output157() {
+    close_output();
+}
+#[test]
+fn close_output158() {
+    close_output();
+}
+#[test]
+fn close_output159() {
+    close_output();
+}
+#[test]
+fn close_output160() {
+    close_output();
+}
+#[test]
+fn close_output161() {
+    close_output();
+}
+#[test]
+fn close_output162() {
+    close_output();
+}
+#[test]
+fn close_output163() {
+    close_output();
+}
+#[test]
+fn close_output164() {
+    close_output();
+}
+#[test]
+fn close_output165() {
+    close_output();
+}
+#[test]
+fn close_output166() {
+    close_output();
+}
+#[test]
+fn close_output167() {
+    close_output();
+}
+#[test]
+fn close_output168() {
+    close_output();
+}
+#[test]
+fn close_output169() {
+    close_output();
+}
+#[test]
+fn close_output170() {
+    close_output();
+}
+#[test]
+fn close_output171() {
+    close_output();
+}
+#[test]
+fn close_output172() {
+    close_output();
+}
+#[test]
+fn close_output173() {
+    close_output();
+}
+#[test]
+fn close_output174() {
+    close_output();
+}
+#[test]
+fn close_output175() {
+    close_output();
+}
+#[test]
+fn close_output176() {
+    close_output();
+}
+#[test]
+fn close_output177() {
+    close_output();
+}
+#[test]
+fn close_output178() {
+    close_output();
+}
+#[test]
+fn close_output179() {
+    close_output();
+}
+#[test]
+fn close_output180() {
+    close_output();
+}
+#[test]
+fn close_output181() {
+    close_output();
+}
+#[test]
+fn close_output182() {
+    close_output();
+}
+#[test]
+fn close_output183() {
+    close_output();
+}
+#[test]
+fn close_output184() {
+    close_output();
+}
+#[test]
+fn close_output185() {
+    close_output();
+}
+#[test]
+fn close_output186() {
+    close_output();
+}
+#[test]
+fn close_output187() {
+    close_output();
+}
+#[test]
+fn close_output188() {
+    close_output();
+}
+#[test]
+fn close_output189() {
+    close_output();
+}
+#[test]
+fn close_output190() {
+    close_output();
+}
+#[test]
+fn close_output191() {
+    close_output();
+}
+#[test]
+fn close_output192() {
+    close_output();
+}
+#[test]
+fn close_output193() {
+    close_output();
+}
+#[test]
+fn close_output194() {
+    close_output();
+}
+#[test]
+fn close_output195() {
+    close_output();
+}
+#[test]
+fn close_output196() {
+    close_output();
+}
+#[test]
+fn close_output197() {
+    close_output();
+}
+#[test]
+fn close_output198() {
+    close_output();
+}
+#[test]
+fn close_output199() {
+    close_output();
+}
+#[test]
+fn close_output200() {
+    close_output();
+}
+#[test]
+fn close_output201() {
+    close_output();
+}
+#[test]
+fn close_output202() {
+    close_output();
+}
+#[test]
+fn close_output203() {
+    close_output();
+}
+#[test]
+fn close_output204() {
+    close_output();
+}
+#[test]
+fn close_output205() {
+    close_output();
+}
+#[test]
+fn close_output206() {
+    close_output();
+}
+#[test]
+fn close_output207() {
+    close_output();
+}
+#[test]
+fn close_output208() {
+    close_output();
+}
+#[test]
+fn close_output209() {
+    close_output();
+}
+#[test]
+fn close_output210() {
+    close_output();
+}
+#[test]
+fn close_output211() {
+    close_output();
+}
+#[test]
+fn close_output212() {
+    close_output();
+}
+#[test]
+fn close_output213() {
+    close_output();
+}
+#[test]
+fn close_output214() {
+    close_output();
+}
+#[test]
+fn close_output215() {
+    close_output();
+}
+#[test]
+fn close_output216() {
+    close_output();
+}
+#[test]
+fn close_output217() {
+    close_output();
+}
+#[test]
+fn close_output218() {
+    close_output();
+}
+#[test]
+fn close_output219() {
+    close_output();
+}
+#[test]
+fn close_output220() {
+    close_output();
+}
+#[test]
+fn close_output221() {
+    close_output();
+}
+#[test]
+fn close_output222() {
+    close_output();
+}
+#[test]
+fn close_output223() {
+    close_output();
+}
+#[test]
+fn close_output224() {
+    close_output();
+}
+#[test]
+fn close_output225() {
+    close_output();
+}
+#[test]
+fn close_output226() {
+    close_output();
+}
+#[test]
+fn close_output227() {
+    close_output();
+}
+#[test]
+fn close_output228() {
+    close_output();
+}
+#[test]
+fn close_output229() {
+    close_output();
+}
+#[test]
+fn close_output230() {
+    close_output();
+}
+#[test]
+fn close_output231() {
+    close_output();
+}
+#[test]
+fn close_output232() {
+    close_output();
+}
+#[test]
+fn close_output233() {
+    close_output();
+}
+#[test]
+fn close_output234() {
+    close_output();
+}
+#[test]
+fn close_output235() {
+    close_output();
+}
+#[test]
+fn close_output236() {
+    close_output();
+}
+#[test]
+fn close_output237() {
+    close_output();
+}
+#[test]
+fn close_output238() {
+    close_output();
+}
+#[test]
+fn close_output239() {
+    close_output();
+}
+#[test]
+fn close_output240() {
+    close_output();
+}
+#[test]
+fn close_output241() {
+    close_output();
+}
+#[test]
+fn close_output242() {
+    close_output();
+}
+#[test]
+fn close_output243() {
+    close_output();
+}
+#[test]
+fn close_output244() {
+    close_output();
+}
+#[test]
+fn close_output245() {
+    close_output();
+}
+#[test]
+fn close_output246() {
+    close_output();
+}
+#[test]
+fn close_output247() {
+    close_output();
+}
+#[test]
+fn close_output248() {
+    close_output();
+}
+#[test]
+fn close_output249() {
+    close_output();
+}
+#[test]
+fn close_output250() {
+    close_output();
+}
+#[test]
+fn close_output251() {
+    close_output();
+}
+#[test]
+fn close_output252() {
+    close_output();
+}
+#[test]
+fn close_output253() {
+    close_output();
+}
+#[test]
+fn close_output254() {
+    close_output();
+}
+#[test]
+fn close_output255() {
+    close_output();
+}
+#[test]
+fn close_output256() {
+    close_output();
+}
+#[test]
+fn close_output257() {
+    close_output();
+}
+#[test]
+fn close_output258() {
+    close_output();
+}
+#[test]
+fn close_output259() {
+    close_output();
+}
+#[test]
+fn close_output260() {
+    close_output();
+}
+#[test]
+fn close_output261() {
+    close_output();
+}
+#[test]
+fn close_output262() {
+    close_output();
+}
+#[test]
+fn close_output263() {
+    close_output();
+}
+#[test]
+fn close_output264() {
+    close_output();
+}
+#[test]
+fn close_output265() {
+    close_output();
+}
+#[test]
+fn close_output266() {
+    close_output();
+}
+#[test]
+fn close_output267() {
+    close_output();
+}
+#[test]
+fn close_output268() {
+    close_output();
+}
+#[test]
+fn close_output269() {
+    close_output();
+}
+#[test]
+fn close_output270() {
+    close_output();
+}
+#[test]
+fn close_output271() {
+    close_output();
+}
+#[test]
+fn close_output272() {
+    close_output();
+}
+#[test]
+fn close_output273() {
+    close_output();
+}
+#[test]
+fn close_output274() {
+    close_output();
+}
+#[test]
+fn close_output275() {
+    close_output();
+}
+#[test]
+fn close_output276() {
+    close_output();
+}
+#[test]
+fn close_output277() {
+    close_output();
+}
+#[test]
+fn close_output278() {
+    close_output();
+}
+#[test]
+fn close_output279() {
+    close_output();
+}
+#[test]
+fn close_output280() {
+    close_output();
+}
+#[test]
+fn close_output281() {
+    close_output();
+}
+#[test]
+fn close_output282() {
+    close_output();
+}
+#[test]
+fn close_output283() {
+    close_output();
+}
+#[test]
+fn close_output284() {
+    close_output();
+}
+#[test]
+fn close_output285() {
+    close_output();
+}
+#[test]
+fn close_output286() {
+    close_output();
+}
+#[test]
+fn close_output287() {
+    close_output();
+}
+#[test]
+fn close_output288() {
+    close_output();
+}
+#[test]
+fn close_output289() {
+    close_output();
+}
+#[test]
+fn close_output290() {
+    close_output();
+}
+#[test]
+fn close_output291() {
+    close_output();
+}
+#[test]
+fn close_output292() {
+    close_output();
+}
+#[test]
+fn close_output293() {
+    close_output();
+}
+#[test]
+fn close_output294() {
+    close_output();
+}
+#[test]
+fn close_output295() {
+    close_output();
+}
+#[test]
+fn close_output296() {
+    close_output();
+}
+#[test]
+fn close_output297() {
+    close_output();
+}
+#[test]
+fn close_output298() {
+    close_output();
+}
+#[test]
+fn close_output299() {
+    close_output();
+}
+#[test]
+fn close_output300() {
+    close_output();
+}
+#[test]
+fn close_output301() {
+    close_output();
+}
+#[test]
+fn close_output302() {
+    close_output();
+}
+#[test]
+fn close_output303() {
+    close_output();
+}
+#[test]
+fn close_output304() {
+    close_output();
+}
+#[test]
+fn close_output305() {
+    close_output();
+}
+#[test]
+fn close_output306() {
+    close_output();
+}
+#[test]
+fn close_output307() {
+    close_output();
+}
+#[test]
+fn close_output308() {
+    close_output();
+}
+#[test]
+fn close_output309() {
+    close_output();
+}
+#[test]
+fn close_output310() {
+    close_output();
+}
+#[test]
+fn close_output311() {
+    close_output();
+}
+#[test]
+fn close_output312() {
+    close_output();
+}
+#[test]
+fn close_output313() {
+    close_output();
+}
+#[test]
+fn close_output314() {
+    close_output();
+}
+#[test]
+fn close_output315() {
+    close_output();
+}
+#[test]
+fn close_output316() {
+    close_output();
+}
+#[test]
+fn close_output317() {
+    close_output();
+}
+#[test]
+fn close_output318() {
+    close_output();
+}
+#[test]
+fn close_output319() {
+    close_output();
+}
+#[test]
+fn close_output320() {
+    close_output();
+}
+#[test]
+fn close_output321() {
+    close_output();
+}
+#[test]
+fn close_output322() {
+    close_output();
+}
+#[test]
+fn close_output323() {
+    close_output();
+}
+#[test]
+fn close_output324() {
+    close_output();
+}
+#[test]
+fn close_output325() {
+    close_output();
+}
+#[test]
+fn close_output326() {
+    close_output();
+}
+#[test]
+fn close_output327() {
+    close_output();
+}
+#[test]
+fn close_output328() {
+    close_output();
+}
+#[test]
+fn close_output329() {
+    close_output();
+}
+#[test]
+fn close_output330() {
+    close_output();
+}
+#[test]
+fn close_output331() {
+    close_output();
+}
+#[test]
+fn close_output332() {
+    close_output();
+}
+#[test]
+fn close_output333() {
+    close_output();
+}
+#[test]
+fn close_output334() {
+    close_output();
+}
+#[test]
+fn close_output335() {
+    close_output();
+}
+#[test]
+fn close_output336() {
+    close_output();
+}
+#[test]
+fn close_output337() {
+    close_output();
+}
+#[test]
+fn close_output338() {
+    close_output();
+}
+#[test]
+fn close_output339() {
+    close_output();
+}
+#[test]
+fn close_output340() {
+    close_output();
+}
+#[test]
+fn close_output341() {
+    close_output();
+}
+#[test]
+fn close_output342() {
+    close_output();
+}
+#[test]
+fn close_output343() {
+    close_output();
+}
+#[test]
+fn close_output344() {
+    close_output();
+}
+#[test]
+fn close_output345() {
+    close_output();
+}
+#[test]
+fn close_output346() {
+    close_output();
+}
+#[test]
+fn close_output347() {
+    close_output();
+}
+#[test]
+fn close_output348() {
+    close_output();
+}
+#[test]
+fn close_output349() {
+    close_output();
+}
+#[test]
+fn close_output350() {
+    close_output();
+}
+#[test]
+fn close_output351() {
+    close_output();
+}
+#[test]
+fn close_output352() {
+    close_output();
+}
+#[test]
+fn close_output353() {
+    close_output();
+}
+#[test]
+fn close_output354() {
+    close_output();
+}
+#[test]
+fn close_output355() {
+    close_output();
+}
+#[test]
+fn close_output356() {
+    close_output();
+}
+#[test]
+fn close_output357() {
+    close_output();
+}
+#[test]
+fn close_output358() {
+    close_output();
+}
+#[test]
+fn close_output359() {
+    close_output();
+}
+#[test]
+fn close_output360() {
+    close_output();
+}
+#[test]
+fn close_output361() {
+    close_output();
+}
+#[test]
+fn close_output362() {
+    close_output();
+}
+#[test]
+fn close_output363() {
+    close_output();
+}
+#[test]
+fn close_output364() {
+    close_output();
+}
+#[test]
+fn close_output365() {
+    close_output();
+}
+#[test]
+fn close_output366() {
+    close_output();
+}
+#[test]
+fn close_output367() {
+    close_output();
+}
+#[test]
+fn close_output368() {
+    close_output();
+}
+#[test]
+fn close_output369() {
+    close_output();
+}
+#[test]
+fn close_output370() {
+    close_output();
+}
+#[test]
+fn close_output371() {
+    close_output();
+}
+#[test]
+fn close_output372() {
+    close_output();
+}
+#[test]
+fn close_output373() {
+    close_output();
+}
+#[test]
+fn close_output374() {
+    close_output();
+}
+#[test]
+fn close_output375() {
+    close_output();
+}
+#[test]
+fn close_output376() {
+    close_output();
+}
+#[test]
+fn close_output377() {
+    close_output();
+}
+#[test]
+fn close_output378() {
+    close_output();
+}
+#[test]
+fn close_output379() {
+    close_output();
+}
+#[test]
+fn close_output380() {
+    close_output();
+}
+#[test]
+fn close_output381() {
+    close_output();
+}
+#[test]
+fn close_output382() {
+    close_output();
+}
+#[test]
+fn close_output383() {
+    close_output();
+}
+#[test]
+fn close_output384() {
+    close_output();
+}
+#[test]
+fn close_output385() {
+    close_output();
+}
+#[test]
+fn close_output386() {
+    close_output();
+}
+#[test]
+fn close_output387() {
+    close_output();
+}
+#[test]
+fn close_output388() {
+    close_output();
+}
+#[test]
+fn close_output389() {
+    close_output();
+}
+#[test]
+fn close_output390() {
+    close_output();
+}
+#[test]
+fn close_output391() {
+    close_output();
+}
+#[test]
+fn close_output392() {
+    close_output();
+}
+#[test]
+fn close_output393() {
+    close_output();
+}
+#[test]
+fn close_output394() {
+    close_output();
+}
+#[test]
+fn close_output395() {
+    close_output();
+}
+#[test]
+fn close_output396() {
+    close_output();
+}
+#[test]
+fn close_output397() {
+    close_output();
+}
+#[test]
+fn close_output398() {
+    close_output();
+}
+#[test]
+fn close_output399() {
+    close_output();
+}
+#[test]
+fn close_output400() {
+    close_output();
+}
+#[test]
+fn close_output401() {
+    close_output();
+}
+#[test]
+fn close_output402() {
+    close_output();
+}
+#[test]
+fn close_output403() {
+    close_output();
+}
+#[test]
+fn close_output404() {
+    close_output();
+}
+#[test]
+fn close_output405() {
+    close_output();
+}
+#[test]
+fn close_output406() {
+    close_output();
+}
+#[test]
+fn close_output407() {
+    close_output();
+}
+#[test]
+fn close_output408() {
+    close_output();
+}
+#[test]
+fn close_output409() {
+    close_output();
+}
+#[test]
+fn close_output410() {
+    close_output();
+}
+#[test]
+fn close_output411() {
+    close_output();
+}
+#[test]
+fn close_output412() {
+    close_output();
+}
+#[test]
+fn close_output413() {
+    close_output();
+}
+#[test]
+fn close_output414() {
+    close_output();
+}
+#[test]
+fn close_output415() {
+    close_output();
+}
+#[test]
+fn close_output416() {
+    close_output();
+}
+#[test]
+fn close_output417() {
+    close_output();
+}
+#[test]
+fn close_output418() {
+    close_output();
+}
+#[test]
+fn close_output419() {
+    close_output();
+}
+#[test]
+fn close_output420() {
+    close_output();
+}
+#[test]
+fn close_output421() {
+    close_output();
+}
+#[test]
+fn close_output422() {
+    close_output();
+}
+#[test]
+fn close_output423() {
+    close_output();
+}
+#[test]
+fn close_output424() {
+    close_output();
+}
+#[test]
+fn close_output425() {
+    close_output();
+}
+#[test]
+fn close_output426() {
+    close_output();
+}
+#[test]
+fn close_output427() {
+    close_output();
+}
+#[test]
+fn close_output428() {
+    close_output();
+}
+#[test]
+fn close_output429() {
+    close_output();
+}
+#[test]
+fn close_output430() {
+    close_output();
+}
+#[test]
+fn close_output431() {
+    close_output();
+}
+#[test]
+fn close_output432() {
+    close_output();
+}
+#[test]
+fn close_output433() {
+    close_output();
+}
+#[test]
+fn close_output434() {
+    close_output();
+}
+#[test]
+fn close_output435() {
+    close_output();
+}
+#[test]
+fn close_output436() {
+    close_output();
+}
+#[test]
+fn close_output437() {
+    close_output();
+}
+#[test]
+fn close_output438() {
+    close_output();
+}
+#[test]
+fn close_output439() {
+    close_output();
+}
+#[test]
+fn close_output440() {
+    close_output();
+}
+#[test]
+fn close_output441() {
+    close_output();
+}
+#[test]
+fn close_output442() {
+    close_output();
+}
+#[test]
+fn close_output443() {
+    close_output();
+}
+#[test]
+fn close_output444() {
+    close_output();
+}
+#[test]
+fn close_output445() {
+    close_output();
+}
+#[test]
+fn close_output446() {
+    close_output();
+}
+#[test]
+fn close_output447() {
+    close_output();
+}
+#[test]
+fn close_output448() {
+    close_output();
+}
+#[test]
+fn close_output449() {
+    close_output();
+}
+#[test]
+fn close_output450() {
+    close_output();
+}
+#[test]
+fn close_output451() {
+    close_output();
+}
+#[test]
+fn close_output452() {
+    close_output();
+}
+#[test]
+fn close_output453() {
+    close_output();
+}
+#[test]
+fn close_output454() {
+    close_output();
+}
+#[test]
+fn close_output455() {
+    close_output();
+}
+#[test]
+fn close_output456() {
+    close_output();
+}
+#[test]
+fn close_output457() {
+    close_output();
+}
+#[test]
+fn close_output458() {
+    close_output();
+}
+#[test]
+fn close_output459() {
+    close_output();
+}
+#[test]
+fn close_output460() {
+    close_output();
+}
+#[test]
+fn close_output461() {
+    close_output();
+}
+#[test]
+fn close_output462() {
+    close_output();
+}
+#[test]
+fn close_output463() {
+    close_output();
+}
+#[test]
+fn close_output464() {
+    close_output();
+}
+#[test]
+fn close_output465() {
+    close_output();
+}
+#[test]
+fn close_output466() {
+    close_output();
+}
+#[test]
+fn close_output467() {
+    close_output();
+}
+#[test]
+fn close_output468() {
+    close_output();
+}
+#[test]
+fn close_output469() {
+    close_output();
+}
+#[test]
+fn close_output470() {
+    close_output();
+}
+#[test]
+fn close_output471() {
+    close_output();
+}
+#[test]
+fn close_output472() {
+    close_output();
+}
+#[test]
+fn close_output473() {
+    close_output();
+}
+#[test]
+fn close_output474() {
+    close_output();
+}
+#[test]
+fn close_output475() {
+    close_output();
+}
+#[test]
+fn close_output476() {
+    close_output();
+}
+#[test]
+fn close_output477() {
+    close_output();
+}
+#[test]
+fn close_output478() {
+    close_output();
+}
+#[test]
+fn close_output479() {
+    close_output();
+}
+#[test]
+fn close_output480() {
+    close_output();
+}
+#[test]
+fn close_output481() {
+    close_output();
+}
+#[test]
+fn close_output482() {
+    close_output();
+}
+#[test]
+fn close_output483() {
+    close_output();
+}
+#[test]
+fn close_output484() {
+    close_output();
+}
+#[test]
+fn close_output485() {
+    close_output();
+}
+#[test]
+fn close_output486() {
+    close_output();
+}
+#[test]
+fn close_output487() {
+    close_output();
+}
+#[test]
+fn close_output488() {
+    close_output();
+}
+#[test]
+fn close_output489() {
+    close_output();
+}
+#[test]
+fn close_output490() {
+    close_output();
+}
+#[test]
+fn close_output491() {
+    close_output();
+}
+#[test]
+fn close_output492() {
+    close_output();
+}
+#[test]
+fn close_output493() {
+    close_output();
+}
+#[test]
+fn close_output494() {
+    close_output();
+}
+#[test]
+fn close_output495() {
+    close_output();
+}
+#[test]
+fn close_output496() {
+    close_output();
+}
+#[test]
+fn close_output497() {
+    close_output();
+}
+#[test]
+fn close_output498() {
+    close_output();
+}
+#[test]
+fn close_output499() {
+    close_output();
+}
+#[test]
+fn close_output500() {
+    close_output();
+}
+#[test]
+fn close_output501() {
+    close_output();
+}
+#[test]
+fn close_output502() {
+    close_output();
+}
+#[test]
+fn close_output503() {
+    close_output();
+}
+#[test]
+fn close_output504() {
+    close_output();
+}
+#[test]
+fn close_output505() {
+    close_output();
+}
+#[test]
+fn close_output506() {
+    close_output();
+}
+#[test]
+fn close_output507() {
+    close_output();
+}
+#[test]
+fn close_output508() {
+    close_output();
+}
+#[test]
+fn close_output509() {
+    close_output();
+}
+#[test]
+fn close_output510() {
+    close_output();
+}
+#[test]
+fn close_output511() {
+    close_output();
+}
+#[test]
+fn close_output512() {
+    close_output();
+}
+#[test]
+fn close_output513() {
+    close_output();
+}
+#[test]
+fn close_output514() {
+    close_output();
+}
+#[test]
+fn close_output515() {
+    close_output();
+}
+#[test]
+fn close_output516() {
+    close_output();
+}
+#[test]
+fn close_output517() {
+    close_output();
+}
+#[test]
+fn close_output518() {
+    close_output();
+}
+#[test]
+fn close_output519() {
+    close_output();
+}
+#[test]
+fn close_output520() {
+    close_output();
+}
+#[test]
+fn close_output521() {
+    close_output();
+}
+#[test]
+fn close_output522() {
+    close_output();
+}
+#[test]
+fn close_output523() {
+    close_output();
+}
+#[test]
+fn close_output524() {
+    close_output();
+}
+#[test]
+fn close_output525() {
+    close_output();
+}
+#[test]
+fn close_output526() {
+    close_output();
+}
+#[test]
+fn close_output527() {
+    close_output();
+}
+#[test]
+fn close_output528() {
+    close_output();
+}
+#[test]
+fn close_output529() {
+    close_output();
+}
+#[test]
+fn close_output530() {
+    close_output();
+}
+#[test]
+fn close_output531() {
+    close_output();
+}
+#[test]
+fn close_output532() {
+    close_output();
+}
+#[test]
+fn close_output533() {
+    close_output();
+}
+#[test]
+fn close_output534() {
+    close_output();
+}
+#[test]
+fn close_output535() {
+    close_output();
+}
+#[test]
+fn close_output536() {
+    close_output();
+}
+#[test]
+fn close_output537() {
+    close_output();
+}
+#[test]
+fn close_output538() {
+    close_output();
+}
+#[test]
+fn close_output539() {
+    close_output();
+}
+#[test]
+fn close_output540() {
+    close_output();
+}
+#[test]
+fn close_output541() {
+    close_output();
+}
+#[test]
+fn close_output542() {
+    close_output();
+}
+#[test]
+fn close_output543() {
+    close_output();
+}
+#[test]
+fn close_output544() {
+    close_output();
+}
+#[test]
+fn close_output545() {
+    close_output();
+}
+#[test]
+fn close_output546() {
+    close_output();
+}
+#[test]
+fn close_output547() {
+    close_output();
+}
+#[test]
+fn close_output548() {
+    close_output();
+}
+#[test]
+fn close_output549() {
+    close_output();
+}
+#[test]
+fn close_output550() {
+    close_output();
+}
+#[test]
+fn close_output551() {
+    close_output();
+}
+#[test]
+fn close_output552() {
+    close_output();
+}
+#[test]
+fn close_output553() {
+    close_output();
+}
+#[test]
+fn close_output554() {
+    close_output();
+}
+#[test]
+fn close_output555() {
+    close_output();
+}
+#[test]
+fn close_output556() {
+    close_output();
+}
+#[test]
+fn close_output557() {
+    close_output();
+}
+#[test]
+fn close_output558() {
+    close_output();
+}
+#[test]
+fn close_output559() {
+    close_output();
+}
+#[test]
+fn close_output560() {
+    close_output();
+}
+#[test]
+fn close_output561() {
+    close_output();
+}
+#[test]
+fn close_output562() {
+    close_output();
+}
+#[test]
+fn close_output563() {
+    close_output();
+}
+#[test]
+fn close_output564() {
+    close_output();
+}
+#[test]
+fn close_output565() {
+    close_output();
+}
+#[test]
+fn close_output566() {
+    close_output();
+}
+#[test]
+fn close_output567() {
+    close_output();
+}
+#[test]
+fn close_output568() {
+    close_output();
+}
+#[test]
+fn close_output569() {
+    close_output();
+}
+#[test]
+fn close_output570() {
+    close_output();
+}
+#[test]
+fn close_output571() {
+    close_output();
+}
+#[test]
+fn close_output572() {
+    close_output();
+}
+#[test]
+fn close_output573() {
+    close_output();
+}
+#[test]
+fn close_output574() {
+    close_output();
+}
+#[test]
+fn close_output575() {
+    close_output();
+}
+#[test]
+fn close_output576() {
+    close_output();
+}
+#[test]
+fn close_output577() {
+    close_output();
+}
+#[test]
+fn close_output578() {
+    close_output();
+}
+#[test]
+fn close_output579() {
+    close_output();
+}
+#[test]
+fn close_output580() {
+    close_output();
+}
+#[test]
+fn close_output581() {
+    close_output();
+}
+#[test]
+fn close_output582() {
+    close_output();
+}
+#[test]
+fn close_output583() {
+    close_output();
+}
+#[test]
+fn close_output584() {
+    close_output();
+}
+#[test]
+fn close_output585() {
+    close_output();
+}
+#[test]
+fn close_output586() {
+    close_output();
+}
+#[test]
+fn close_output587() {
+    close_output();
+}
+#[test]
+fn close_output588() {
+    close_output();
+}
+#[test]
+fn close_output589() {
+    close_output();
+}
+#[test]
+fn close_output590() {
+    close_output();
+}
+#[test]
+fn close_output591() {
+    close_output();
+}
+#[test]
+fn close_output592() {
+    close_output();
+}
+#[test]
+fn close_output593() {
+    close_output();
+}
+#[test]
+fn close_output594() {
+    close_output();
+}
+#[test]
+fn close_output595() {
+    close_output();
+}
+#[test]
+fn close_output596() {
+    close_output();
+}
+#[test]
+fn close_output597() {
+    close_output();
+}
+#[test]
+fn close_output598() {
+    close_output();
+}
+#[test]
+fn close_output599() {
+    close_output();
+}
+#[test]
+fn close_output600() {
+    close_output();
+}
+#[test]
+fn close_output601() {
+    close_output();
+}
+#[test]
+fn close_output602() {
+    close_output();
+}
+#[test]
+fn close_output603() {
+    close_output();
+}
+#[test]
+fn close_output604() {
+    close_output();
+}
+#[test]
+fn close_output605() {
+    close_output();
+}
+#[test]
+fn close_output606() {
+    close_output();
+}
+#[test]
+fn close_output607() {
+    close_output();
+}
+#[test]
+fn close_output608() {
+    close_output();
+}
+#[test]
+fn close_output609() {
+    close_output();
+}
+#[test]
+fn close_output610() {
+    close_output();
+}
+#[test]
+fn close_output611() {
+    close_output();
+}
+#[test]
+fn close_output612() {
+    close_output();
+}
+#[test]
+fn close_output613() {
+    close_output();
+}
+#[test]
+fn close_output614() {
+    close_output();
+}
+#[test]
+fn close_output615() {
+    close_output();
+}
+#[test]
+fn close_output616() {
+    close_output();
+}
+#[test]
+fn close_output617() {
+    close_output();
+}
+#[test]
+fn close_output618() {
+    close_output();
+}
+#[test]
+fn close_output619() {
+    close_output();
+}
+#[test]
+fn close_output620() {
+    close_output();
+}
+#[test]
+fn close_output621() {
+    close_output();
+}
+#[test]
+fn close_output622() {
+    close_output();
+}
+#[test]
+fn close_output623() {
+    close_output();
+}
+#[test]
+fn close_output624() {
+    close_output();
+}
+#[test]
+fn close_output625() {
+    close_output();
+}
+#[test]
+fn close_output626() {
+    close_output();
+}
+#[test]
+fn close_output627() {
+    close_output();
+}
+#[test]
+fn close_output628() {
+    close_output();
+}
+#[test]
+fn close_output629() {
+    close_output();
+}
+#[test]
+fn close_output630() {
+    close_output();
+}
+#[test]
+fn close_output631() {
+    close_output();
+}
+#[test]
+fn close_output632() {
+    close_output();
+}
+#[test]
+fn close_output633() {
+    close_output();
+}
+#[test]
+fn close_output634() {
+    close_output();
+}
+#[test]
+fn close_output635() {
+    close_output();
+}
+#[test]
+fn close_output636() {
+    close_output();
+}
+#[test]
+fn close_output637() {
+    close_output();
+}
+#[test]
+fn close_output638() {
+    close_output();
+}
+#[test]
+fn close_output639() {
+    close_output();
+}
+#[test]
+fn close_output640() {
+    close_output();
+}
+#[test]
+fn close_output641() {
+    close_output();
+}
+#[test]
+fn close_output642() {
+    close_output();
+}
+#[test]
+fn close_output643() {
+    close_output();
+}
+#[test]
+fn close_output644() {
+    close_output();
+}
+#[test]
+fn close_output645() {
+    close_output();
+}
+#[test]
+fn close_output646() {
+    close_output();
+}
+#[test]
+fn close_output647() {
+    close_output();
+}
+#[test]
+fn close_output648() {
+    close_output();
+}
+#[test]
+fn close_output649() {
+    close_output();
+}
+#[test]
+fn close_output650() {
+    close_output();
+}
+#[test]
+fn close_output651() {
+    close_output();
+}
+#[test]
+fn close_output652() {
+    close_output();
+}
+#[test]
+fn close_output653() {
+    close_output();
+}
+#[test]
+fn close_output654() {
+    close_output();
+}
+#[test]
+fn close_output655() {
+    close_output();
+}
+#[test]
+fn close_output656() {
+    close_output();
+}
+#[test]
+fn close_output657() {
+    close_output();
+}
+#[test]
+fn close_output658() {
+    close_output();
+}
+#[test]
+fn close_output659() {
+    close_output();
+}
+#[test]
+fn close_output660() {
+    close_output();
+}
+#[test]
+fn close_output661() {
+    close_output();
+}
+#[test]
+fn close_output662() {
+    close_output();
+}
+#[test]
+fn close_output663() {
+    close_output();
+}
+#[test]
+fn close_output664() {
+    close_output();
+}
+#[test]
+fn close_output665() {
+    close_output();
+}
+#[test]
+fn close_output666() {
+    close_output();
+}
+#[test]
+fn close_output667() {
+    close_output();
+}
+#[test]
+fn close_output668() {
+    close_output();
+}
+#[test]
+fn close_output669() {
+    close_output();
+}
+#[test]
+fn close_output670() {
+    close_output();
+}
+#[test]
+fn close_output671() {
+    close_output();
+}
+#[test]
+fn close_output672() {
+    close_output();
+}
+#[test]
+fn close_output673() {
+    close_output();
+}
+#[test]
+fn close_output674() {
+    close_output();
+}
+#[test]
+fn close_output675() {
+    close_output();
+}
+#[test]
+fn close_output676() {
+    close_output();
+}
+#[test]
+fn close_output677() {
+    close_output();
+}
+#[test]
+fn close_output678() {
+    close_output();
+}
+#[test]
+fn close_output679() {
+    close_output();
+}
+#[test]
+fn close_output680() {
+    close_output();
+}
+#[test]
+fn close_output681() {
+    close_output();
+}
+#[test]
+fn close_output682() {
+    close_output();
+}
+#[test]
+fn close_output683() {
+    close_output();
+}
+#[test]
+fn close_output684() {
+    close_output();
+}
+#[test]
+fn close_output685() {
+    close_output();
+}
+#[test]
+fn close_output686() {
+    close_output();
+}
+#[test]
+fn close_output687() {
+    close_output();
+}
+#[test]
+fn close_output688() {
+    close_output();
+}
+#[test]
+fn close_output689() {
+    close_output();
+}
+#[test]
+fn close_output690() {
+    close_output();
+}
+#[test]
+fn close_output691() {
+    close_output();
+}
+#[test]
+fn close_output692() {
+    close_output();
+}
+#[test]
+fn close_output693() {
+    close_output();
+}
+#[test]
+fn close_output694() {
+    close_output();
+}
+#[test]
+fn close_output695() {
+    close_output();
+}
+#[test]
+fn close_output696() {
+    close_output();
+}
+#[test]
+fn close_output697() {
+    close_output();
+}
+#[test]
+fn close_output698() {
+    close_output();
+}
+#[test]
+fn close_output699() {
+    close_output();
+}
+#[test]
+fn close_output700() {
+    close_output();
+}
+#[test]
+fn close_output701() {
+    close_output();
+}
+#[test]
+fn close_output702() {
+    close_output();
+}
+#[test]
+fn close_output703() {
+    close_output();
+}
+#[test]
+fn close_output704() {
+    close_output();
+}
+#[test]
+fn close_output705() {
+    close_output();
+}
+#[test]
+fn close_output706() {
+    close_output();
+}
+#[test]
+fn close_output707() {
+    close_output();
+}
+#[test]
+fn close_output708() {
+    close_output();
+}
+#[test]
+fn close_output709() {
+    close_output();
+}
+#[test]
+fn close_output710() {
+    close_output();
+}
+#[test]
+fn close_output711() {
+    close_output();
+}
+#[test]
+fn close_output712() {
+    close_output();
+}
+#[test]
+fn close_output713() {
+    close_output();
+}
+#[test]
+fn close_output714() {
+    close_output();
+}
+#[test]
+fn close_output715() {
+    close_output();
+}
+#[test]
+fn close_output716() {
+    close_output();
+}
+#[test]
+fn close_output717() {
+    close_output();
+}
+#[test]
+fn close_output718() {
+    close_output();
+}
+#[test]
+fn close_output719() {
+    close_output();
+}
+#[test]
+fn close_output720() {
+    close_output();
+}
+#[test]
+fn close_output721() {
+    close_output();
+}
+#[test]
+fn close_output722() {
+    close_output();
+}
+#[test]
+fn close_output723() {
+    close_output();
+}
+#[test]
+fn close_output724() {
+    close_output();
+}
+#[test]
+fn close_output725() {
+    close_output();
+}
+#[test]
+fn close_output726() {
+    close_output();
+}
+#[test]
+fn close_output727() {
+    close_output();
+}
+#[test]
+fn close_output728() {
+    close_output();
+}
+#[test]
+fn close_output729() {
+    close_output();
+}
+#[test]
+fn close_output730() {
+    close_output();
+}
+#[test]
+fn close_output731() {
+    close_output();
+}
+#[test]
+fn close_output732() {
+    close_output();
+}
+#[test]
+fn close_output733() {
+    close_output();
+}
+#[test]
+fn close_output734() {
+    close_output();
+}
+#[test]
+fn close_output735() {
+    close_output();
+}
+#[test]
+fn close_output736() {
+    close_output();
+}
+#[test]
+fn close_output737() {
+    close_output();
+}
+#[test]
+fn close_output738() {
+    close_output();
+}
+#[test]
+fn close_output739() {
+    close_output();
+}
+#[test]
+fn close_output740() {
+    close_output();
+}
+#[test]
+fn close_output741() {
+    close_output();
+}
+#[test]
+fn close_output742() {
+    close_output();
+}
+#[test]
+fn close_output743() {
+    close_output();
+}
+#[test]
+fn close_output744() {
+    close_output();
+}
+#[test]
+fn close_output745() {
+    close_output();
+}
+#[test]
+fn close_output746() {
+    close_output();
+}
+#[test]
+fn close_output747() {
+    close_output();
+}
+#[test]
+fn close_output748() {
+    close_output();
+}
+#[test]
+fn close_output749() {
+    close_output();
+}
+#[test]
+fn close_output750() {
+    close_output();
+}
+#[test]
+fn close_output751() {
+    close_output();
+}
+#[test]
+fn close_output752() {
+    close_output();
+}
+#[test]
+fn close_output753() {
+    close_output();
+}
+#[test]
+fn close_output754() {
+    close_output();
+}
+#[test]
+fn close_output755() {
+    close_output();
+}
+#[test]
+fn close_output756() {
+    close_output();
+}
+#[test]
+fn close_output757() {
+    close_output();
+}
+#[test]
+fn close_output758() {
+    close_output();
+}
+#[test]
+fn close_output759() {
+    close_output();
+}
+#[test]
+fn close_output760() {
+    close_output();
+}
+#[test]
+fn close_output761() {
+    close_output();
+}
+#[test]
+fn close_output762() {
+    close_output();
+}
+#[test]
+fn close_output763() {
+    close_output();
+}
+#[test]
+fn close_output764() {
+    close_output();
+}
+#[test]
+fn close_output765() {
+    close_output();
+}
+#[test]
+fn close_output766() {
+    close_output();
+}
+#[test]
+fn close_output767() {
+    close_output();
+}
+#[test]
+fn close_output768() {
+    close_output();
+}
+#[test]
+fn close_output769() {
+    close_output();
+}
+#[test]
+fn close_output770() {
+    close_output();
+}
+#[test]
+fn close_output771() {
+    close_output();
+}
+#[test]
+fn close_output772() {
+    close_output();
+}
+#[test]
+fn close_output773() {
+    close_output();
+}
+#[test]
+fn close_output774() {
+    close_output();
+}
+#[test]
+fn close_output775() {
+    close_output();
+}
+#[test]
+fn close_output776() {
+    close_output();
+}
+#[test]
+fn close_output777() {
+    close_output();
+}
+#[test]
+fn close_output778() {
+    close_output();
+}
+#[test]
+fn close_output779() {
+    close_output();
+}
+#[test]
+fn close_output780() {
+    close_output();
+}
+#[test]
+fn close_output781() {
+    close_output();
+}
+#[test]
+fn close_output782() {
+    close_output();
+}
+#[test]
+fn close_output783() {
+    close_output();
+}
+#[test]
+fn close_output784() {
+    close_output();
+}
+#[test]
+fn close_output785() {
+    close_output();
+}
+#[test]
+fn close_output786() {
+    close_output();
+}
+#[test]
+fn close_output787() {
+    close_output();
+}
+#[test]
+fn close_output788() {
+    close_output();
+}
+#[test]
+fn close_output789() {
+    close_output();
+}
+#[test]
+fn close_output790() {
+    close_output();
+}
+#[test]
+fn close_output791() {
+    close_output();
+}
+#[test]
+fn close_output792() {
+    close_output();
+}
+#[test]
+fn close_output793() {
+    close_output();
+}
+#[test]
+fn close_output794() {
+    close_output();
+}
+#[test]
+fn close_output795() {
+    close_output();
+}
+#[test]
+fn close_output796() {
+    close_output();
+}
+#[test]
+fn close_output797() {
+    close_output();
+}
+#[test]
+fn close_output798() {
+    close_output();
+}
+#[test]
+fn close_output799() {
+    close_output();
+}
+#[test]
+fn close_output800() {
+    close_output();
+}
+#[test]
+fn close_output801() {
+    close_output();
+}
+#[test]
+fn close_output802() {
+    close_output();
+}
+#[test]
+fn close_output803() {
+    close_output();
+}
+#[test]
+fn close_output804() {
+    close_output();
+}
+#[test]
+fn close_output805() {
+    close_output();
+}
+#[test]
+fn close_output806() {
+    close_output();
+}
+#[test]
+fn close_output807() {
+    close_output();
+}
+#[test]
+fn close_output808() {
+    close_output();
+}
+#[test]
+fn close_output809() {
+    close_output();
+}
+#[test]
+fn close_output810() {
+    close_output();
+}
+#[test]
+fn close_output811() {
+    close_output();
+}
+#[test]
+fn close_output812() {
+    close_output();
+}
+#[test]
+fn close_output813() {
+    close_output();
+}
+#[test]
+fn close_output814() {
+    close_output();
+}
+#[test]
+fn close_output815() {
+    close_output();
+}
+#[test]
+fn close_output816() {
+    close_output();
+}
+#[test]
+fn close_output817() {
+    close_output();
+}
+#[test]
+fn close_output818() {
+    close_output();
+}
+#[test]
+fn close_output819() {
+    close_output();
+}
+#[test]
+fn close_output820() {
+    close_output();
+}
+#[test]
+fn close_output821() {
+    close_output();
+}
+#[test]
+fn close_output822() {
+    close_output();
+}
+#[test]
+fn close_output823() {
+    close_output();
+}
+#[test]
+fn close_output824() {
+    close_output();
+}
+#[test]
+fn close_output825() {
+    close_output();
+}
+#[test]
+fn close_output826() {
+    close_output();
+}
+#[test]
+fn close_output827() {
+    close_output();
+}
+#[test]
+fn close_output828() {
+    close_output();
+}
+#[test]
+fn close_output829() {
+    close_output();
+}
+#[test]
+fn close_output830() {
+    close_output();
+}
+#[test]
+fn close_output831() {
+    close_output();
+}
+#[test]
+fn close_output832() {
+    close_output();
+}
+#[test]
+fn close_output833() {
+    close_output();
+}
+#[test]
+fn close_output834() {
+    close_output();
+}
+#[test]
+fn close_output835() {
+    close_output();
+}
+#[test]
+fn close_output836() {
+    close_output();
+}
+#[test]
+fn close_output837() {
+    close_output();
+}
+#[test]
+fn close_output838() {
+    close_output();
+}
+#[test]
+fn close_output839() {
+    close_output();
+}
+#[test]
+fn close_output840() {
+    close_output();
+}
+#[test]
+fn close_output841() {
+    close_output();
+}
+#[test]
+fn close_output842() {
+    close_output();
+}
+#[test]
+fn close_output843() {
+    close_output();
+}
+#[test]
+fn close_output844() {
+    close_output();
+}
+#[test]
+fn close_output845() {
+    close_output();
+}
+#[test]
+fn close_output846() {
+    close_output();
+}
+#[test]
+fn close_output847() {
+    close_output();
+}
+#[test]
+fn close_output848() {
+    close_output();
+}
+#[test]
+fn close_output849() {
+    close_output();
+}
+#[test]
+fn close_output850() {
+    close_output();
+}
+#[test]
+fn close_output851() {
+    close_output();
+}
+#[test]
+fn close_output852() {
+    close_output();
+}
+#[test]
+fn close_output853() {
+    close_output();
+}
+#[test]
+fn close_output854() {
+    close_output();
+}
+#[test]
+fn close_output855() {
+    close_output();
+}
+#[test]
+fn close_output856() {
+    close_output();
+}
+#[test]
+fn close_output857() {
+    close_output();
+}
+#[test]
+fn close_output858() {
+    close_output();
+}
+#[test]
+fn close_output859() {
+    close_output();
+}
+#[test]
+fn close_output860() {
+    close_output();
+}
+#[test]
+fn close_output861() {
+    close_output();
+}
+#[test]
+fn close_output862() {
+    close_output();
+}
+#[test]
+fn close_output863() {
+    close_output();
+}
+#[test]
+fn close_output864() {
+    close_output();
+}
+#[test]
+fn close_output865() {
+    close_output();
+}
+#[test]
+fn close_output866() {
+    close_output();
+}
+#[test]
+fn close_output867() {
+    close_output();
+}
+#[test]
+fn close_output868() {
+    close_output();
+}
+#[test]
+fn close_output869() {
+    close_output();
+}
+#[test]
+fn close_output870() {
+    close_output();
+}
+#[test]
+fn close_output871() {
+    close_output();
+}
+#[test]
+fn close_output872() {
+    close_output();
+}
+#[test]
+fn close_output873() {
+    close_output();
+}
+#[test]
+fn close_output874() {
+    close_output();
+}
+#[test]
+fn close_output875() {
+    close_output();
+}
+#[test]
+fn close_output876() {
+    close_output();
+}
+#[test]
+fn close_output877() {
+    close_output();
+}
+#[test]
+fn close_output878() {
+    close_output();
+}
+#[test]
+fn close_output879() {
+    close_output();
+}
+#[test]
+fn close_output880() {
+    close_output();
+}
+#[test]
+fn close_output881() {
+    close_output();
+}
+#[test]
+fn close_output882() {
+    close_output();
+}
+#[test]
+fn close_output883() {
+    close_output();
+}
+#[test]
+fn close_output884() {
+    close_output();
+}
+#[test]
+fn close_output885() {
+    close_output();
+}
+#[test]
+fn close_output886() {
+    close_output();
+}
+#[test]
+fn close_output887() {
+    close_output();
+}
+#[test]
+fn close_output888() {
+    close_output();
+}
+#[test]
+fn close_output889() {
+    close_output();
+}
+#[test]
+fn close_output890() {
+    close_output();
+}
+#[test]
+fn close_output891() {
+    close_output();
+}
+#[test]
+fn close_output892() {
+    close_output();
+}
+#[test]
+fn close_output893() {
+    close_output();
+}
+#[test]
+fn close_output894() {
+    close_output();
+}
+#[test]
+fn close_output895() {
+    close_output();
+}
+#[test]
+fn close_output896() {
+    close_output();
+}
+#[test]
+fn close_output897() {
+    close_output();
+}
+#[test]
+fn close_output898() {
+    close_output();
+}
+#[test]
+fn close_output899() {
+    close_output();
+}
+#[test]
+fn close_output900() {
+    close_output();
+}
+#[test]
+fn close_output901() {
+    close_output();
+}
+#[test]
+fn close_output902() {
+    close_output();
+}
+#[test]
+fn close_output903() {
+    close_output();
+}
+#[test]
+fn close_output904() {
+    close_output();
+}
+#[test]
+fn close_output905() {
+    close_output();
+}
+#[test]
+fn close_output906() {
+    close_output();
+}
+#[test]
+fn close_output907() {
+    close_output();
+}
+#[test]
+fn close_output908() {
+    close_output();
+}
+#[test]
+fn close_output909() {
+    close_output();
+}
+#[test]
+fn close_output910() {
+    close_output();
+}
+#[test]
+fn close_output911() {
+    close_output();
+}
+#[test]
+fn close_output912() {
+    close_output();
+}
+#[test]
+fn close_output913() {
+    close_output();
+}
+#[test]
+fn close_output914() {
+    close_output();
+}
+#[test]
+fn close_output915() {
+    close_output();
+}
+#[test]
+fn close_output916() {
+    close_output();
+}
+#[test]
+fn close_output917() {
+    close_output();
+}
+#[test]
+fn close_output918() {
+    close_output();
+}
+#[test]
+fn close_output919() {
+    close_output();
+}
+#[test]
+fn close_output920() {
+    close_output();
+}
+#[test]
+fn close_output921() {
+    close_output();
+}
+#[test]
+fn close_output922() {
+    close_output();
+}
+#[test]
+fn close_output923() {
+    close_output();
+}
+#[test]
+fn close_output924() {
+    close_output();
+}
+#[test]
+fn close_output925() {
+    close_output();
+}
+#[test]
+fn close_output926() {
+    close_output();
+}
+#[test]
+fn close_output927() {
+    close_output();
+}
+#[test]
+fn close_output928() {
+    close_output();
+}
+#[test]
+fn close_output929() {
+    close_output();
+}
+#[test]
+fn close_output930() {
+    close_output();
+}
+#[test]
+fn close_output931() {
+    close_output();
+}
+#[test]
+fn close_output932() {
+    close_output();
+}
+#[test]
+fn close_output933() {
+    close_output();
+}
+#[test]
+fn close_output934() {
+    close_output();
+}
+#[test]
+fn close_output935() {
+    close_output();
+}
+#[test]
+fn close_output936() {
+    close_output();
+}
+#[test]
+fn close_output937() {
+    close_output();
+}
+#[test]
+fn close_output938() {
+    close_output();
+}
+#[test]
+fn close_output939() {
+    close_output();
+}
+#[test]
+fn close_output940() {
+    close_output();
+}
+#[test]
+fn close_output941() {
+    close_output();
+}
+#[test]
+fn close_output942() {
+    close_output();
+}
+#[test]
+fn close_output943() {
+    close_output();
+}
+#[test]
+fn close_output944() {
+    close_output();
+}
+#[test]
+fn close_output945() {
+    close_output();
+}
+#[test]
+fn close_output946() {
+    close_output();
+}
+#[test]
+fn close_output947() {
+    close_output();
+}
+#[test]
+fn close_output948() {
+    close_output();
+}
+#[test]
+fn close_output949() {
+    close_output();
+}
+#[test]
+fn close_output950() {
+    close_output();
+}
+#[test]
+fn close_output951() {
+    close_output();
+}
+#[test]
+fn close_output952() {
+    close_output();
+}
+#[test]
+fn close_output953() {
+    close_output();
+}
+#[test]
+fn close_output954() {
+    close_output();
+}
+#[test]
+fn close_output955() {
+    close_output();
+}
+#[test]
+fn close_output956() {
+    close_output();
+}
+#[test]
+fn close_output957() {
+    close_output();
+}
+#[test]
+fn close_output958() {
+    close_output();
+}
+#[test]
+fn close_output959() {
+    close_output();
+}
+#[test]
+fn close_output960() {
+    close_output();
+}
+#[test]
+fn close_output961() {
+    close_output();
+}
+#[test]
+fn close_output962() {
+    close_output();
+}
+#[test]
+fn close_output963() {
+    close_output();
+}
+#[test]
+fn close_output964() {
+    close_output();
+}
+#[test]
+fn close_output965() {
+    close_output();
+}
+#[test]
+fn close_output966() {
+    close_output();
+}
+#[test]
+fn close_output967() {
+    close_output();
+}
+#[test]
+fn close_output968() {
+    close_output();
+}
+#[test]
+fn close_output969() {
+    close_output();
+}
+#[test]
+fn close_output970() {
+    close_output();
+}
+#[test]
+fn close_output971() {
+    close_output();
+}
+#[test]
+fn close_output972() {
+    close_output();
+}
+#[test]
+fn close_output973() {
+    close_output();
+}
+#[test]
+fn close_output974() {
+    close_output();
+}
+#[test]
+fn close_output975() {
+    close_output();
+}
+#[test]
+fn close_output976() {
+    close_output();
+}
+#[test]
+fn close_output977() {
+    close_output();
+}
+#[test]
+fn close_output978() {
+    close_output();
+}
+#[test]
+fn close_output979() {
+    close_output();
+}
+#[test]
+fn close_output980() {
+    close_output();
+}
+#[test]
+fn close_output981() {
+    close_output();
+}
+#[test]
+fn close_output982() {
+    close_output();
+}
+#[test]
+fn close_output983() {
+    close_output();
+}
+#[test]
+fn close_output984() {
+    close_output();
+}
+#[test]
+fn close_output985() {
+    close_output();
+}
+#[test]
+fn close_output986() {
+    close_output();
+}
+#[test]
+fn close_output987() {
+    close_output();
+}
+#[test]
+fn close_output988() {
+    close_output();
+}
+#[test]
+fn close_output989() {
+    close_output();
+}
+#[test]
+fn close_output990() {
+    close_output();
+}
+#[test]
+fn close_output991() {
+    close_output();
+}
+#[test]
+fn close_output992() {
+    close_output();
+}
+#[test]
+fn close_output993() {
+    close_output();
+}
+#[test]
+fn close_output994() {
+    close_output();
+}
+#[test]
+fn close_output995() {
+    close_output();
+}
+#[test]
+fn close_output996() {
+    close_output();
+}
+#[test]
+fn close_output997() {
+    close_output();
+}
+#[test]
+fn close_output998() {
+    close_output();
+}
+#[test]
+fn close_output999() {
+    close_output();
+}
+
 #[cargo_test]
 fn close_output() {
     // What happens when stdout or stderr is closed during a build.
