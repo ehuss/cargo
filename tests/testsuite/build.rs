@@ -8976,11 +8976,11 @@ fn close_output() {
                     let mut buf = [0];
                     drop(socket.read_exact(&mut buf));
                     let use_stderr = std::env::var("__CARGO_REPRO_STDERR").is_ok();
-                    for i in 0..10000 {
+                    for i in 0..100000 {
                         if use_stderr {
-                            eprintln!("{}", i);
+                            eprintln!("0123456789{}", i);
                         } else {
-                            println!("{}", i);
+                            println!("0123456789{}", i);
                         }
                     }
                     TokenStream::new()
