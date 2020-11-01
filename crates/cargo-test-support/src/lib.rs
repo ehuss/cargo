@@ -471,7 +471,8 @@ pub struct Execs {
     expect_neither_contains: Vec<String>,
     expect_stderr_with_without: Vec<(Vec<String>, Vec<String>)>,
     expect_json: Option<Vec<String>>,
-    expect_json_contains_unordered: Vec<String>,
+    expect_json_partial: bool,
+    expect_json_contains_unordered: bool,
     stream_output: bool,
 }
 
@@ -654,9 +655,18 @@ impl Execs {
     ///
     /// See `with_json` for more detail.
     pub fn with_json_contains_unordered(&mut self, expected: &str) -> &mut Self {
-        self.expect_json_contains_unordered
-            .extend(expected.split("\n\n").map(|line| line.to_string()));
-        self
+        self.expect_json_contains_unordered = true;
+        self.with_json(expected)
+    }
+
+    /// Verifies the JSON output matches the given JSON.
+    ///
+    /// This is the same as `with_json`, except that it allows the output to
+    /// contain extra (unmatched) fields. Use this when you are only interested
+    /// in specific fields.
+    pub fn with_json_partial(&mut self, expected: &str) -> &mut Self {
+        self.expect_json_partial = true;
+        self.with_json(expected)
     }
 
     /// Forward subordinate process stdout/stderr to the terminal.
@@ -752,7 +762,6 @@ impl Execs {
             && self.expect_neither_contains.is_empty()
             && self.expect_stderr_with_without.is_empty()
             && self.expect_json.is_none()
-            && self.expect_json_contains_unordered.is_empty()
         {
             panic!(
                 "`with_status()` is used, but no output is checked.\n\
@@ -934,49 +943,44 @@ impl Execs {
         if let Some(ref objects) = self.expect_json {
             let stdout = str::from_utf8(&actual.stdout)
                 .map_err(|_| "stdout was not utf8 encoded".to_owned())?;
-            let lines = stdout
-                .lines()
-                .filter(|line| line.starts_with('{'))
-                .collect::<Vec<_>>();
-            if lines.len() != objects.len() {
-                return Err(format!(
-                    "expected {} json lines, got {}, stdout:\n{}",
-                    objects.len(),
-                    lines.len(),
-                    stdout
-                ));
-            }
-            for (obj, line) in objects.iter().zip(lines) {
-                self.match_json(obj, line)?;
-            }
-        }
-
-        if !self.expect_json_contains_unordered.is_empty() {
-            let stdout = str::from_utf8(&actual.stdout)
-                .map_err(|_| "stdout was not utf8 encoded".to_owned())?;
             let mut lines = stdout
                 .lines()
                 .filter(|line| line.starts_with('{'))
                 .collect::<Vec<_>>();
-            for obj in &self.expect_json_contains_unordered {
-                match lines
-                    .iter()
-                    .position(|line| self.match_json(obj, line).is_ok())
-                {
-                    Some(index) => lines.remove(index),
-                    None => {
-                        return Err(format!(
-                            "Did not find expected JSON:\n\
-                             {}\n\
-                             Remaining available output:\n\
-                             {}\n",
-                            serde_json::to_string_pretty(obj).unwrap(),
-                            lines.join("\n")
-                        ));
-                    }
-                };
+            if self.expect_json_contains_unordered {
+                for obj in objects {
+                    match lines
+                        .iter()
+                        .position(|line| self.match_json(obj, line, false).is_ok())
+                    {
+                        Some(index) => lines.remove(index),
+                        None => {
+                            return Err(format!(
+                                "Did not find expected JSON:\n\
+                                 {}\n\
+                                 Remaining available output:\n\
+                                 {}\n",
+                                serde_json::to_string_pretty(obj).unwrap(),
+                                lines.join("\n")
+                            ));
+                        }
+                    };
+                }
+            } else {
+                if lines.len() != objects.len() {
+                    return Err(format!(
+                        "expected {} json lines, got {}, stdout:\n{}",
+                        objects.len(),
+                        lines.len(),
+                        stdout
+                    ));
+                }
+                for (obj, line) in objects.iter().zip(lines) {
+                    self.match_json(obj, line, self.expect_json_partial)?;
+                }
             }
         }
+
         Ok(())
     }
 
@@ -1155,7 +1159,7 @@ impl Execs {
         }
     }
 
-    fn match_json(&self, expected: &str, line: &str) -> MatchResult {
+    fn match_json(&self, expected: &str, line: &str, partial: bool) -> MatchResult {
         let expected = self.normalize_matcher(expected);
         let line = self.normalize_matcher(line);
         let actual = match line.parse() {
@@ -1167,7 +1171,7 @@ impl Execs {
             Ok(expected) => expected,
         };
 
-        find_json_mismatch(&expected, &actual)
+        find_json_mismatch(&expected, &actual, partial)
     }
 
     fn diff_lines<'a>(
@@ -1345,8 +1349,8 @@ fn lines_match_works() {
 /// as paths). You can use a `"{...}"` string literal as a wildcard for
 /// arbitrary nested JSON (useful for parts of object emitted by other programs
 /// (e.g., rustc) rather than Cargo itself).
-pub fn find_json_mismatch(expected: &Value, actual: &Value) -> Result<(), String> {
-    match find_json_mismatch_r(expected, actual) {
+pub fn find_json_mismatch(expected: &Value, actual: &Value, partial: bool) -> Result<(), String> {
+    match find_json_mismatch_r(expected, actual, partial) {
         Some((expected_part, actual_part)) => Err(format!(
             "JSON mismatch\nExpected:\n{}\nWas:\n{}\nExpected part:\n{}\nActual part:\n{}\n",
             serde_json::to_string_pretty(expected).unwrap(),
@@ -1361,6 +1365,7 @@ pub fn find_json_mismatch(expected: &Value, actual: &Value) -> Result<(), String
 fn find_json_mismatch_r<'a>(
     expected: &'a Value,
     actual: &'a Value,
+    partial: bool,
 ) -> Option<(&'a Value, &'a Value)> {
     use serde_json::Value::*;
     match (expected, actual) {
@@ -1374,10 +1379,22 @@ fn find_json_mismatch_r<'a>(
 
             l.iter()
                 .zip(r.iter())
-                .filter_map(|(l, r)| find_json_mismatch_r(l, r))
+                .filter_map(|(l, r)| find_json_mismatch_r(l, r, partial))
                 .next()
         }
-        (&Object(ref l), &Object(ref r)) => {
+        (&Object(ref l), &Object(ref r)) if partial => {
+            for (key, l_value) in l {
+                let r_value = match r.get(key) {
+                    Some(v) => v,
+                    None => return Some((expected, actual)),
+                };
+                if let Some(v) = find_json_mismatch_r(l_value, r_value, partial) {
+                    return Some(v);
+                }
+            }
+            None
+        }
+        (&Object(ref l), &Object(ref r)) if !partial => {
             let same_keys = l.len() == r.len() && l.keys().all(|k| r.contains_key(k));
             if !same_keys {
                 return Some((expected, actual));
@@ -1385,13 +1402,108 @@ fn find_json_mismatch_r<'a>(
 
             l.values()
                 .zip(r.values())
-                .filter_map(|(l, r)| find_json_mismatch_r(l, r))
+                .filter_map(|(l, r)| find_json_mismatch_r(l, r, partial))
                 .next()
         }
         (&Null, &Null) => None,
         // Magic string literal `"{...}"` acts as wildcard for any sub-JSON.
         (&String(ref l), _) if l == "{...}" => None,
         _ => Some((expected, actual)),
+    }
+}
+
+#[cfg(test)]
+mod find_json_mismatch_tests {
+    use super::find_json_mismatch_r;
+
+    macro_rules! assert_json_eq {
+        ($expected:expr, $actual:expr) => {
+            assert_json_eq!($expected, $actual, false, None)
+        };
+        ($expected:expr, $actual:expr, PARTIAL) => {
+            assert_json_eq!($expected, $actual, true, None)
+        };
+        ($expected:expr, $actual:expr, $partial:expr, $equal:expr) => {
+            let expected = serde_json::from_str($expected).unwrap();
+            let actual = serde_json::from_str($actual).unwrap();
+            assert_eq!(find_json_mismatch_r(&expected, &actual, $partial), $equal);
+        };
+    }
+    macro_rules! assert_json_ne {
+        ($expected:expr, $actual:expr) => {
+            assert_json_ne!($expected, $actual, false, $expected, $actual)
+        };
+        ($expected:expr, $actual:expr, PARTIAL) => {
+            assert_json_ne!($expected, $actual, true, $expected, $actual)
+        };
+        ($expected:expr, $actual:expr, PARTIAL, $expected_part:expr, $actual_part:expr) => {
+            assert_json_ne!($expected, $actual, true, $expected_part, $actual_part)
+        };
+        ($expected:expr, $actual:expr, $partial:expr, $expected_part:expr, $actual_part:expr) => {
+            let expected_part = serde_json::from_str($expected_part).unwrap();
+            let actual_part = serde_json::from_str($actual_part).unwrap();
+            assert_json_eq!(
+                $expected,
+                $actual,
+                $partial,
+                Some((&expected_part, &actual_part))
+            )
+        };
+    }
+
+    #[test]
+    fn find_json_mismatch_matches() {
+        for (expected, actual) in &[
+            ("123", "123"),
+            ("true", "true"),
+            ("\"foo [..]\"", "\"foo bar\""),
+            ("[\"foo [..]\"]", "[\"foo bar\"]"),
+            ("null", "null"),
+            ("\"{...}\"", "\"foo\""),
+            ("\"{...}\"", "1"),
+            ("\"{...}\"", "true"),
+            ("\"{...}\"", "[]"),
+            ("\"{...}\"", "{}"),
+            ("\"{...}\"", "null"),
+            (
+                r#"{"key1": 123, "key2": "{...}"}"#,
+                r#"{"key1": 123, "key2": 456}"#,
+            ),
+        ] {
+            assert_json_eq!(expected, actual);
+        }
+    }
+
+    #[test]
+    fn find_json_mismatch_partial() {
+        for (expected, actual) in &[
+            (r#"{}"#, r#"{"key1": 123}"#),
+            (r#"{"abc": 123}"#, r#"{"abc": 123, "xyz": 456}"#),
+        ] {
+            assert_json_eq!(expected, actual, PARTIAL);
+            assert_json_ne!(expected, actual);
+        }
+        assert_json_ne!(r#"{"extra": 123}"#, "{}", PARTIAL);
+        assert_json_ne!(r#"{"extra": 123}"#, "{}");
+    }
+
+    #[test]
+    fn find_json_mismatch_mismatch() {
+        for (expected, actual) in &[
+            ("123", "456"),
+            ("true", "false"),
+            ("\"foo [..]\"", "\"bar\""),
+            ("null", "123"),
+        ] {
+            assert_json_ne!(expected, actual);
+        }
+        assert_json_ne!(
+            "[\"foo [..]\"]",
+            "[\"bar\"]",
+            PARTIAL,
+            "\"foo [..]\"",
+            "\"bar\""
+        );
     }
 }
 
@@ -1444,7 +1556,8 @@ pub fn execs() -> Execs {
         expect_neither_contains: Vec::new(),
         expect_stderr_with_without: Vec::new(),
         expect_json: None,
-        expect_json_contains_unordered: Vec::new(),
+        expect_json_partial: false,
+        expect_json_contains_unordered: false,
         stream_output: false,
     }
 }
