@@ -68,10 +68,11 @@
 
 use crate::core::dependency::Dependency;
 use crate::core::{PackageId, SourceId, Summary};
-use crate::sources::registry::{RegistryData, RegistryPackage};
+use crate::sources::registry::{RegistryData, RegistryPackage, INDEX_SCHEMA_VERSION};
 use crate::util::interning::InternedString;
 use crate::util::paths;
 use crate::util::{internal, CargoResult, Config, Filesystem, ToSemver};
+use anyhow::bail;
 use log::info;
 use semver::{Version, VersionReq};
 use std::collections::{HashMap, HashSet};
@@ -659,19 +660,19 @@ impl<'a> SummariesCache<'a> {
             .split_first()
             .ok_or_else(|| anyhow::format_err!("malformed cache"))?;
         if *first_byte != CURRENT_CACHE_VERSION {
-            anyhow::bail!("looks like a different Cargo's cache, bailing out");
+            bail!("looks like a different Cargo's cache, bailing out");
         }
         let mut iter = split(rest, 0);
         if let Some(update) = iter.next() {
             if update != last_index_update.as_bytes() {
-                anyhow::bail!(
+                bail!(
                     "cache out of date: current index ({}) != cache ({})",
                     last_index_update,
                     str::from_utf8(update)?,
                 )
             }
         } else {
-            anyhow::bail!("malformed file");
+            bail!("malformed file");
         }
         let mut ret = SummariesCache::default();
         while let Some(version) = iter.next() {
@@ -749,7 +750,12 @@ impl IndexSummary {
             features,
             yanked,
             links,
+            v,
         } = serde_json::from_slice(line)?;
+        let v = v.unwrap_or(1);
+        if v > INDEX_SCHEMA_VERSION {
+            bail!("unsupported schema version {} ({} {})", v, name, vers);
+        }
         log::trace!("json parsed registry {}/{}", name, vers);
         let pkgid = PackageId::new(name, &vers, source_id)?;
         let deps = deps
