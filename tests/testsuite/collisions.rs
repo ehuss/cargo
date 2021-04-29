@@ -808,7 +808,7 @@ fn collision_doc_sources() {
         .file("bar/src/lib.rs", "")
         .build();
 
-    p.cargo("doc")
+    p.cargo("doc -j1")
         .with_stderr_unordered(
             "\
 [UPDATING] [..]
