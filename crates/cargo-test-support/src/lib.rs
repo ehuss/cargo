@@ -1019,12 +1019,13 @@ impl Execs {
                 if diffs.is_empty() {
                     Ok(())
                 } else {
+                    let diff = make_diff(&actual, &out);
                     Err(format!(
                         "differences:\n\
                          {}\n\n\
                          other output:\n\
                          `{}`",
-                        diffs.join("\n"),
+                        diff,
                         String::from_utf8_lossy(extra)
                     ))
                 }
@@ -1769,4 +1770,80 @@ pub fn symlink_supported() -> bool {
 /// The error message for ENOENT.
 pub fn no_such_file_err_msg() -> String {
     std::io::Error::from_raw_os_error(2).to_string()
+}
+
+struct Line(Option<usize>);
+
+impl fmt::Display for Line {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            None => write!(f, "    "),
+            Some(idx) => write!(f, "{:<4}", idx + 1),
+        }
+    }
+}
+
+/// Generates a pretty ANSI diff of the two strings.
+fn make_diff(actual: &str, out: &str) -> String {
+    use similar::{ChangeTag, TextDiff};
+    use std::io::Write;
+    use termcolor::{Ansi, Color, ColorSpec, WriteColor};
+
+    // termcolor is not very ergonomic, but I don't want to bring in another dependency.
+    let mut red = ColorSpec::new();
+    red.set_fg(Some(Color::Red));
+    let mut green = ColorSpec::new();
+    green.set_fg(Some(Color::Green));
+    let mut dim = ColorSpec::new();
+    dim.set_dimmed(true);
+
+    let diff = TextDiff::from_lines(actual, out);
+    let mut result = Ansi::new(Vec::new());
+    for (idx, group) in diff.grouped_ops(3).iter().enumerate() {
+        if idx > 0 {
+            writeln!(result, "{:-^1$}", "-", 80).unwrap();
+        }
+        for op in group {
+            for change in diff.iter_inline_changes(op) {
+                let (sign, color) = match change.tag() {
+                    ChangeTag::Delete => ("-", &red),
+                    ChangeTag::Insert => ("+", &green),
+                    ChangeTag::Equal => (" ", &dim),
+                };
+                result.set_color(&dim).unwrap();
+                write!(
+                    result,
+                    "{}{}",
+                    Line(change.old_index()),
+                    Line(change.new_index()),
+                )
+                .unwrap();
+                result.reset().unwrap();
+                write!(result, " |").unwrap();
+                let mut bold = color.clone();
+                bold.set_bold(true);
+                result.set_color(&bold).unwrap();
+                write!(result, "{}", sign).unwrap();
+                result.reset().unwrap();
+                for (emphasized, value) in change.iter_strings_lossy() {
+                    if emphasized {
+                        let mut emphasized = color.clone();
+                        emphasized.set_underline(true);
+                        emphasized.set_bold(true);
+                        result.set_color(&emphasized).unwrap();
+                        write!(result, "{}", value).unwrap();
+                        result.reset().unwrap();
+                    } else {
+                        result.set_color(&color).unwrap();
+                        write!(result, "{}", value).unwrap();
+                        result.reset().unwrap();
+                    }
+                }
+                if change.missing_newline() {
+                    writeln!(result).unwrap();
+                }
+            }
+        }
+    }
+    String::from_utf8(result.into_inner()).unwrap()
 }
