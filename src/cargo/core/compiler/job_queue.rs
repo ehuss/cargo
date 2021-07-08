@@ -69,9 +69,8 @@ use super::job::{
 };
 use super::timings::Timings;
 use super::{BuildContext, BuildPlan, CompileMode, Context, Unit};
-use crate::core::compiler::future_incompat::{
-    FutureBreakageItem, FutureIncompatReportPackage, OnDiskReports,
-};
+use crate::core::compiler::future_incompat::OnDiskReports;
+use crate::core::compiler::Diagnostic;
 use crate::core::resolver::ResolveBehavior;
 use crate::core::{FeatureValue, PackageId, Shell, TargetKind};
 use crate::util::diagnostic_server::{self, DiagnosticPrinter};
@@ -157,7 +156,7 @@ struct DrainState<'cfg> {
 
     /// How many jobs we've finished
     finished: usize,
-    per_package_future_incompat_reports: Vec<FutureIncompatReportPackage>,
+    per_package_future_incompat_reports: BTreeMap<PackageId, Vec<Diagnostic>>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -235,7 +234,7 @@ enum Message {
     FixDiagnostic(diagnostic_server::Message),
     Token(io::Result<Acquired>),
     Finish(JobId, Artifact, CargoResult<()>),
-    FutureIncompatReport(JobId, Vec<FutureBreakageItem>),
+    FutureIncompatDiagnostic(JobId, Diagnostic),
 
     // This client should get release_raw called on it with one of our tokens
     NeedsToken(JobId),
@@ -290,9 +289,9 @@ impl<'a> JobState<'a> {
             .push(Message::Finish(self.id, Artifact::Metadata, Ok(())));
     }
 
-    pub fn future_incompat_report(&self, report: Vec<FutureBreakageItem>) {
+    pub fn future_incompat_diagnostic(&self, diag: Diagnostic) {
         self.messages
-            .push(Message::FutureIncompatReport(self.id, report));
+            .push(Message::FutureIncompatDiagnostic(self.id, diag));
     }
 
     /// The rustc underlying this Job is about to acquire a jobserver token (i.e., block)
@@ -423,7 +422,7 @@ impl<'cfg> JobQueue<'cfg> {
             pending_queue: Vec::new(),
             print: DiagnosticPrinter::new(cx.bcx.config),
             finished: 0,
-            per_package_future_incompat_reports: Vec::new(),
+            per_package_future_incompat_reports: BTreeMap::new(),
         };
 
         // Create a helper thread for acquiring jobserver tokens
@@ -606,10 +605,12 @@ impl<'cfg> DrainState<'cfg> {
                     }
                 }
             }
-            Message::FutureIncompatReport(id, items) => {
+            Message::FutureIncompatDiagnostic(id, diagnostic) => {
                 let package_id = self.active[&id].pkg.package_id();
                 self.per_package_future_incompat_reports
-                    .push(FutureIncompatReportPackage { package_id, items });
+                    .entry(package_id)
+                    .or_default()
+                    .push(diagnostic);
             }
             Message::Token(acquired_token) => {
                 let token = acquired_token.with_context(|| "failed to acquire jobserver token")?;
@@ -818,13 +819,9 @@ impl<'cfg> DrainState<'cfg> {
         }
 
         // Get a list of unique and sorted package name/versions.
-        let package_vers: BTreeSet<_> = self
+        let package_vers: Vec<_> = self
             .per_package_future_incompat_reports
-            .iter()
-            .map(|r| r.package_id)
-            .collect();
-        let package_vers: Vec<_> = package_vers
-            .into_iter()
+            .keys()
             .map(|pid| pid.to_string())
             .collect();
 

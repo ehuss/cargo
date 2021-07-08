@@ -49,7 +49,6 @@ pub(crate) use self::layout::Layout;
 pub use self::lto::Lto;
 use self::output_depinfo::output_depinfo;
 use self::unit_graph::UnitDep;
-use crate::core::compiler::future_incompat::FutureIncompatReport;
 pub use crate::core::compiler::unit::{Unit, UnitInterner};
 use crate::core::manifest::TargetSourcePath;
 use crate::core::profiles::{PanicStrategy, Profile, Strip};
@@ -174,14 +173,12 @@ fn compile<'cfg>(
         } else {
             // We always replay the output cache,
             // since it might contain future-incompat-report messages
+            let opts = OutputOptions::new_replay(cx, unit);
             let work = replay_output_cache(
+                opts,
                 unit.pkg.package_id(),
                 PathBuf::from(unit.pkg.manifest_path()),
                 &unit.target,
-                cx.files().message_cache_path(unit),
-                cx.bcx.build_config.message_format,
-                cx.bcx.config.shell().err_supports_color(),
-                unit.show_warnings(bcx.config),
             );
             // Need to link targets on both the dirty and fresh.
             work.then(link_targets(cx, unit, true)?)
@@ -242,7 +239,7 @@ fn rustc(cx: &mut Context<'_, '_>, unit: &Unit, exec: &Arc<dyn Executor>) -> Car
     if cx.bcx.config.cli_unstable().binary_dep_depinfo {
         rustc.arg("-Z").arg("binary-dep-depinfo");
     }
-    let mut output_options = OutputOptions::new(cx, unit);
+    let mut output_options = OutputOptions::new_build(cx, unit);
     let package_id = unit.pkg.package_id();
     let target = Target::clone(&unit.target);
     let mode = unit.mode;
@@ -659,7 +656,7 @@ fn rustdoc(cx: &mut Context<'_, '_>, unit: &Unit) -> CargoResult<Work> {
     let package_id = unit.pkg.package_id();
     let manifest_path = PathBuf::from(unit.pkg.manifest_path());
     let target = Target::clone(&unit.target);
-    let mut output_options = OutputOptions::new(cx, unit);
+    let mut output_options = OutputOptions::new_build(cx, unit);
     let script_metadata = cx.find_build_script_metadata(unit);
     Ok(Work::new(move |state| {
         if let Some(script_metadata) = script_metadata {
@@ -963,7 +960,10 @@ fn build_base_args(
     }
 
     if bcx.config.cli_unstable().future_incompat_report {
-        cmd.arg("-Z").arg("emit-future-incompat-report");
+        cmd.arg("-Z")
+            .arg("emit-future-incompat-report")
+            .arg("--force-warns=future-incompatible-report")
+            .arg("-Zunstable-options");
     }
 
     // Add `CARGO_BIN_` environment variables for building tests.
@@ -1165,33 +1165,48 @@ struct OutputOptions {
     look_for_metadata_directive: bool,
     /// Whether or not to display messages in color.
     color: bool,
+    /// Location where cached output is saved.
+    cache_path: PathBuf,
     /// Where to write the JSON messages to support playback later if the unit
     /// is fresh. The file is created lazily so that in the normal case, lots
     /// of empty files are not created. If this is None, the output will not
     /// be cached (such as when replaying cached messages).
-    cache_cell: Option<(PathBuf, LazyCell<File>)>,
-    /// If `true`, display any recorded warning messages.
+    cache_cell: Option<LazyCell<File>>,
+    /// TODO If `true`, display any recorded warning messages.
     /// Other types of messages are processed regardless
     /// of the value of this flag
+    /// primarily for supporting -vv
     show_warnings: bool,
+    is_local: bool,
+    is_replay: bool,
     warnings_seen: usize,
     errors_seen: usize,
 }
 
 impl OutputOptions {
-    fn new(cx: &Context<'_, '_>, unit: &Unit) -> OutputOptions {
+    /// Options suitable for a normal build.
+    fn new_build(cx: &Context<'_, '_>, unit: &Unit) -> OutputOptions {
+        let mut opts = Self::new_replay(cx, unit);
+        opts.is_replay = false;
+        // Remove old cache, ignore ENOENT, which is the common case.
+        drop(fs::remove_file(&opts.cache_path));
+        opts.cache_cell = Some(LazyCell::new());
+        opts
+    }
+
+    /// Options suitable for replaying cached messages.
+    fn new_replay(cx: &Context<'_, '_>, unit: &Unit) -> OutputOptions {
         let look_for_metadata_directive = cx.rmeta_required(unit);
         let color = cx.bcx.config.shell().err_supports_color();
-        let path = cx.files().message_cache_path(unit);
-        // Remove old cache, ignore ENOENT, which is the common case.
-        drop(fs::remove_file(&path));
-        let cache_cell = Some((path, LazyCell::new()));
         OutputOptions {
             format: cx.bcx.build_config.message_format,
             look_for_metadata_directive,
             color,
-            cache_cell,
-            show_warnings: true,
+            cache_path: cx.files().message_cache_path(unit),
+            cache_cell: None,
+            show_warnings: unit.show_warnings(cx.bcx.config),
+            is_local: unit.is_local(),
+            is_replay: true,
             warnings_seen: 0,
             errors_seen: 0,
         }
@@ -1218,15 +1233,28 @@ fn on_stderr_line(
 ) -> CargoResult<()> {
     if on_stderr_line_inner(state, line, package_id, manifest_path, target, options)? {
         // Check if caching is enabled.
-        if let Some((path, cell)) = &mut options.cache_cell {
+        if let OutputOptions {
+            cache_path,
+            cache_cell: Some(cell),
+            ..
+        } = options
+        {
             // Cache the output, which will be replayed later when Fresh.
-            let f = cell.try_borrow_mut_with(|| paths::create(path))?;
+            let f = cell.try_borrow_mut_with(|| paths::create(cache_path))?;
             debug_assert!(!line.contains('\n'));
             f.write_all(line.as_bytes())?;
             f.write_all(&[b'\n'])?;
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Diagnostic {
+    pub rendered: String,
+    pub message: String,
+    pub level: String,
+    pub future_incompatible_report: Option<bool>,
 }
 
 /// Returns true if the line should be cached.
@@ -1269,12 +1297,16 @@ fn on_stderr_line_inner(
         }
     };
 
-    if let Ok(report) = serde_json::from_str::<FutureIncompatReport>(compiler_message.get()) {
-        for item in &report.future_incompat_report {
-            count_diagnostic(&*item.diagnostic.level, options);
+    let diag_msg: Option<Diagnostic> = serde_json::from_str(compiler_message.get()).ok();
+
+    if let Some(diag) = &diag_msg {
+        if diag.future_incompatible_report.unwrap_or(false) {
+            state.future_incompat_diagnostic(diag.clone());
+            // repos should never show this, unless -vv
+            if !options.is_local && !options.show_warnings {
+                return Ok(true);
+            }
         }
-        state.future_incompat_report(report.future_incompat_report);
-        return Ok(true);
     }
 
     // Depending on what we're emitting from Cargo itself, we figure out what to
@@ -1290,13 +1322,7 @@ fn on_stderr_line_inner(
             render_diagnostics: true,
             ..
         } => {
-            #[derive(serde::Deserialize)]
-            struct CompilerMessage {
-                rendered: String,
-                message: String,
-                level: String,
-            }
-            if let Ok(mut error) = serde_json::from_str::<CompilerMessage>(compiler_message.get()) {
+            if let Some(mut error) = diag_msg {
                 if error.level == "error" && error.message.starts_with("aborting due to") {
                     // Skip this line; we'll print our own summary at the end.
                     return Ok(true);
@@ -1314,7 +1340,12 @@ fn on_stderr_line_inner(
                         .map(|v| String::from_utf8(v).expect("utf8"))
                         .expect("strip should never fail")
                 };
-                if options.show_warnings {
+                // In a normal build, this should always display.
+                // Don't show warnings unless local or -vv
+
+                // previously, show_warnings = true only for initial_build || (replay && (-vv || local))
+                //      Because if the build fails, you don't want to hide the warnings.
+                if !options.is_replay || options.show_warnings {
                     count_diagnostic(&error.level, options);
                     state.stderr(rendered)?;
                 }
@@ -1403,11 +1434,7 @@ fn on_stderr_line_inner(
         return Ok(true);
     }
 
-    #[derive(serde::Deserialize)]
-    struct CompilerMessage {
-        level: String,
-    }
-    if let Ok(message) = serde_json::from_str::<CompilerMessage>(compiler_message.get()) {
+    if let Some(message) = &diag_msg {
         count_diagnostic(&message.level, options);
     }
 
@@ -1427,33 +1454,21 @@ fn on_stderr_line_inner(
 }
 
 fn replay_output_cache(
+    mut options: OutputOptions,
     package_id: PackageId,
     manifest_path: PathBuf,
     target: &Target,
-    path: PathBuf,
-    format: MessageFormat,
-    color: bool,
-    show_warnings: bool,
 ) -> Work {
     let target = target.clone();
-    let mut options = OutputOptions {
-        format,
-        look_for_metadata_directive: true,
-        color,
-        cache_cell: None,
-        show_warnings,
-        warnings_seen: 0,
-        errors_seen: 0,
-    };
     Work::new(move |state| {
-        if !path.exists() {
+        if !options.cache_path.exists() {
             // No cached output, probably didn't emit anything.
             return Ok(());
         }
         // We sometimes have gigabytes of output from the compiler, so avoid
         // loading it all into memory at once, as that can cause OOM where
         // otherwise there would be none.
-        let file = paths::open(&path)?;
+        let file = paths::open(&options.cache_path)?;
         let mut reader = std::io::BufReader::new(file);
         let mut line = String::new();
         loop {

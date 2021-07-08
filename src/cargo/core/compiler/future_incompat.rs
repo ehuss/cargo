@@ -1,11 +1,12 @@
 //! Support for future-incompatible warning reporting.
 
+use crate::core::compiler::Diagnostic;
 use crate::core::{Dependency, PackageId, Workspace};
 use crate::sources::SourceConfigMap;
 use crate::util::{iter_join, CargoResult, Config};
 use anyhow::{bail, format_err, Context};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 
@@ -23,37 +24,6 @@ means and how to resolve it.
 
 /// Current version of the on-disk format.
 const ON_DISK_VERSION: u32 = 0;
-
-/// The future incompatibility report, emitted by the compiler as a JSON message.
-#[derive(serde::Deserialize)]
-pub struct FutureIncompatReport {
-    pub future_incompat_report: Vec<FutureBreakageItem>,
-}
-
-/// Structure used for collecting reports in-memory.
-pub struct FutureIncompatReportPackage {
-    pub package_id: PackageId,
-    pub items: Vec<FutureBreakageItem>,
-}
-
-/// A single future-incompatible warning emitted by rustc.
-#[derive(Serialize, Deserialize)]
-pub struct FutureBreakageItem {
-    /// The date at which this lint will become an error.
-    /// Currently unused
-    pub future_breakage_date: Option<String>,
-    /// The original diagnostic emitted by the compiler
-    pub diagnostic: Diagnostic,
-}
-
-/// A diagnostic emitted by the compiler as a JSON message.
-/// We only care about the 'rendered' field
-#[derive(Serialize, Deserialize)]
-pub struct Diagnostic {
-    pub rendered: String,
-    pub level: String,
-}
-
 /// The filename in the top-level `target` directory where we store
 /// the report
 const FUTURE_INCOMPAT_FILE: &str = ".future-incompat-report.json";
@@ -95,7 +65,7 @@ impl OnDiskReports {
     /// Saves a new report.
     pub fn save_report(
         ws: &Workspace<'_>,
-        per_package_reports: &[FutureIncompatReportPackage],
+        per_package_reports: &BTreeMap<PackageId, Vec<Diagnostic>>,
     ) -> OnDiskReports {
         let mut current_reports = match Self::load(ws) {
             Ok(r) => r,
@@ -199,24 +169,17 @@ impl OnDiskReports {
 
 fn render_report(
     ws: &Workspace<'_>,
-    per_package_reports: &[FutureIncompatReportPackage],
+    per_package_reports: &BTreeMap<PackageId, Vec<Diagnostic>>,
 ) -> String {
-    let mut per_package_reports: Vec<_> = per_package_reports.iter().collect();
-    per_package_reports.sort_by_key(|r| r.package_id);
     let mut rendered = String::new();
-    for per_package in &per_package_reports {
+    for (package_id, diagnostics) in per_package_reports {
         rendered.push_str(&format!(
             "The package `{}` currently triggers the following future \
              incompatibility lints:\n",
-            per_package.package_id
+            package_id
         ));
-        for item in &per_package.items {
-            rendered.extend(
-                item.diagnostic
-                    .rendered
-                    .lines()
-                    .map(|l| format!("> {}\n", l)),
-            );
+        for diagnostic in diagnostics {
+            rendered.extend(diagnostic.rendered.lines().map(|l| format!("> {}\n", l)));
         }
         rendered.push('\n');
     }
@@ -226,17 +189,18 @@ fn render_report(
     rendered
 }
 
+/// Checks if newer versions of the package are available, and suggests
+/// updating to those.
 fn render_suggestions(
     ws: &Workspace<'_>,
-    per_package_reports: &[&FutureIncompatReportPackage],
+    per_package_reports: &BTreeMap<PackageId, Vec<Diagnostic>>,
 ) -> Option<String> {
     // This in general ignores all errors since this is opportunistic.
     let _lock = ws.config().acquire_package_cache_lock().ok()?;
     // Create a set of updated registry sources.
     let map = SourceConfigMap::new(ws.config()).ok()?;
     let package_ids: BTreeSet<_> = per_package_reports
-        .iter()
-        .map(|r| r.package_id)
+        .keys()
         .filter(|pkg_id| pkg_id.source_id().is_registry())
         .collect();
     let source_ids: HashSet<_> = package_ids

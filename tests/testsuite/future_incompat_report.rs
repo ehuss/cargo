@@ -6,7 +6,7 @@ use cargo_test_support::{basic_manifest, is_nightly, project, Project};
 // An arbitrary lint (array_into_iter) that triggers a report.
 const FUTURE_EXAMPLE: &'static str = "fn main() { [true].into_iter(); }";
 // Some text that will be displayed when the lint fires.
-const FUTURE_OUTPUT: &'static str = "[..]array_into_iter[..]";
+const FUTURE_OUTPUT: &'static str = "[..]array[..]into[..]iter[..]";
 
 fn simple_project() -> Project {
     project()
@@ -89,7 +89,7 @@ note: 0 dependencies had future-incompatible warnings
 }
 
 #[cargo_test]
-#[ignore] // Waiting on https://github.com/rust-lang/rust/pull/86478
+// #[ignore] // Waiting on https://github.com/rust-lang/rust/pull/86478
 fn test_single_crate() {
     if !is_nightly() {
         return;
@@ -115,7 +115,7 @@ fn test_single_crate() {
 }
 
 #[cargo_test]
-#[ignore] // Waiting on https://github.com/rust-lang/rust/pull/86478
+// #[ignore] // Waiting on https://github.com/rust-lang/rust/pull/86478
 fn test_multi_crate() {
     if !is_nightly() {
         return;
@@ -223,7 +223,7 @@ fn test_multi_crate() {
 }
 
 #[cargo_test]
-#[ignore] // Waiting on https://github.com/rust-lang/rust/pull/86478
+// #[ignore] // Waiting on https://github.com/rust-lang/rust/pull/86478
 fn color() {
     if !is_nightly() {
         return;
@@ -248,7 +248,7 @@ fn color() {
 }
 
 #[cargo_test]
-#[ignore] // Waiting on https://github.com/rust-lang/rust/pull/86478
+// #[ignore] // Waiting on https://github.com/rust-lang/rust/pull/86478
 fn bad_ids() {
     if !is_nightly() {
         return;
@@ -285,7 +285,7 @@ Available IDs are: 1
 }
 
 #[cargo_test]
-#[ignore] // Waiting on https://github.com/rust-lang/rust/pull/86478
+// #[ignore] // Waiting on https://github.com/rust-lang/rust/pull/86478
 fn suggestions_for_updates() {
     if !is_nightly() {
         return;
