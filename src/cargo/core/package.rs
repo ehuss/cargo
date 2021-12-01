@@ -23,7 +23,7 @@ use crate::core::resolver::features::ForceAllTargets;
 use crate::core::resolver::{HasDevUnits, Resolve};
 use crate::core::source::MaybePackage;
 use crate::core::{Dependency, Manifest, PackageId, SourceId, Target};
-use crate::core::{SourceMap, Summary, Workspace};
+use crate::core::{LastUse, SourceMap, Summary, Workspace};
 use crate::ops;
 use crate::util::config::PackageCacheLock;
 use crate::util::errors::{CargoResult, HttpNot200};
@@ -372,6 +372,8 @@ pub struct Downloads<'a, 'cfg> {
     /// Global filesystem lock to ensure only one Cargo is downloading at a
     /// time.
     _lock: PackageCacheLock<'cfg>,
+
+    last_use: LastUse,
 }
 
 struct Download<'cfg> {
@@ -473,6 +475,7 @@ impl<'cfg> PackageSet<'cfg> {
             next_speed_check: Cell::new(Instant::now()),
             next_speed_check_bytes_threshold: Cell::new(0),
             _lock: self.config.acquire_package_cache_lock()?,
+            last_use: LastUse::load(self.config)?,
         })
     }
 
@@ -698,7 +701,7 @@ impl<'a, 'cfg> Downloads<'a, 'cfg> {
             .get_mut(id.source_id())
             .ok_or_else(|| internal(format!("couldn't find source for `{}`", id)))?;
         let pkg = source
-            .download(id)
+            .download(id, &mut self.last_use)
             .with_context(|| "unable to get packages from source")?;
         let (url, descriptor) = match pkg {
             MaybePackage::Ready(pkg) => {
@@ -917,7 +920,7 @@ impl<'a, 'cfg> Downloads<'a, 'cfg> {
             .get_mut(dl.id.source_id())
             .ok_or_else(|| internal(format!("couldn't find source for `{}`", dl.id)))?;
         let start = Instant::now();
-        let pkg = source.finish_download(dl.id, data)?;
+        let pkg = source.finish_download(dl.id, data, &mut self.last_use)?;
 
         // Assume that no time has passed while we were calling
         // `finish_download`, update all speed checks and timeout limits of all
@@ -1109,6 +1112,15 @@ enum WhyTick<'a> {
 impl<'a, 'cfg> Drop for Downloads<'a, 'cfg> {
     fn drop(&mut self) {
         self.set.downloading.set(false);
+
+        if let Err(e) = self.last_use.save(self.set.config) {
+            crate::display_warning_with_error(
+                "failed to save last-use data",
+                &e,
+                &mut self.set.config.shell(),
+            );
+        }
+
         let progress = self.progress.get_mut().take().unwrap();
         // Don't print a download summary if we're not using a progress bar,
         // we've already printed lots of `Downloading...` items.

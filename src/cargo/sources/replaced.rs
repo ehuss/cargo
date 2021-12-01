@@ -1,5 +1,5 @@
 use crate::core::source::MaybePackage;
-use crate::core::{Dependency, Package, PackageId, Source, SourceId, Summary};
+use crate::core::{Dependency, LastUse, Package, PackageId, Source, SourceId, Summary};
 use crate::util::errors::CargoResult;
 
 use anyhow::Context as _;
@@ -72,11 +72,11 @@ impl<'cfg> Source for ReplacedSource<'cfg> {
         Ok(())
     }
 
-    fn download(&mut self, id: PackageId) -> CargoResult<MaybePackage> {
+    fn download(&mut self, id: PackageId, last_use: &mut LastUse) -> CargoResult<MaybePackage> {
         let id = id.with_source_id(self.replace_with);
         let pkg = self
             .inner
-            .download(id)
+            .download(id, last_use)
             .with_context(|| format!("failed to download replaced source {}", self.to_replace))?;
         Ok(match pkg {
             MaybePackage::Ready(pkg) => {
@@ -86,11 +86,16 @@ impl<'cfg> Source for ReplacedSource<'cfg> {
         })
     }
 
-    fn finish_download(&mut self, id: PackageId, data: Vec<u8>) -> CargoResult<Package> {
+    fn finish_download(
+        &mut self,
+        id: PackageId,
+        data: Vec<u8>,
+        last_use: &mut LastUse,
+    ) -> CargoResult<Package> {
         let id = id.with_source_id(self.replace_with);
         let pkg = self
             .inner
-            .finish_download(id, data)
+            .finish_download(id, data, last_use)
             .with_context(|| format!("failed to download replaced source {}", self.to_replace))?;
         Ok(pkg.map_source(self.replace_with, self.to_replace))
     }

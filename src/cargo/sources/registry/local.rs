@@ -1,4 +1,4 @@
-use crate::core::PackageId;
+use crate::core::{LastUse, PackageId};
 use crate::sources::registry::{MaybeLock, RegistryConfig, RegistryData};
 use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
@@ -82,7 +82,12 @@ impl<'cfg> RegistryData for LocalRegistry<'cfg> {
         Ok(())
     }
 
-    fn download(&mut self, pkg: PackageId, checksum: &str) -> CargoResult<MaybeLock> {
+    fn download(
+        &mut self,
+        pkg: PackageId,
+        checksum: &str,
+        _last_use: &mut LastUse,
+    ) -> CargoResult<MaybeLock> {
         let crate_file = format!("{}-{}.crate", pkg.name(), pkg.version());
 
         // Note that the usage of `into_path_unlocked` here is because the local
@@ -117,6 +122,7 @@ impl<'cfg> RegistryData for LocalRegistry<'cfg> {
         _pkg: PackageId,
         _checksum: &str,
         _data: &[u8],
+        _last_use: &mut LastUse,
     ) -> CargoResult<File> {
         panic!("this source doesn't download")
     }

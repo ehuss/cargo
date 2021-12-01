@@ -19,3 +19,7 @@ url = "2.2.2"
 [[bench]]
 name = "resolve"
 harness = false
+
+[[bench]]
+name = "last_use"
+harness = false

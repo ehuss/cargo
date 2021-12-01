@@ -174,7 +174,7 @@ use tar::Archive;
 
 use crate::core::dependency::{DepKind, Dependency};
 use crate::core::source::MaybePackage;
-use crate::core::{Package, PackageId, Source, SourceId, Summary};
+use crate::core::{LastUse, LastUseKind, Package, PackageId, Source, SourceId, Summary};
 use crate::sources::PathSource;
 use crate::util::hex;
 use crate::util::interning::InternedString;
@@ -198,6 +198,7 @@ const CHECKSUM_TEMPLATE: &str = "{sha256-checksum}";
 /// kinds, with the registry-specific logic implemented as part of the
 /// [`RegistryData`] trait referenced via the `ops` field.
 pub struct RegistrySource<'cfg> {
+    name: String,
     source_id: SourceId,
     /// The path where crate files are extracted (`$CARGO_HOME/registry/src/$REG-HASH`).
     src_path: Filesystem,
@@ -473,7 +474,12 @@ pub trait RegistryData {
     /// `finish_download`. For already downloaded `.crate` files, it does not
     /// validate the checksum, assuming the filesystem does not suffer from
     /// corruption or manipulation.
-    fn download(&mut self, pkg: PackageId, checksum: &str) -> CargoResult<MaybeLock>;
+    fn download(
+        &mut self,
+        pkg: PackageId,
+        checksum: &str,
+        last_use: &mut LastUse,
+    ) -> CargoResult<MaybeLock>;
 
     /// Finish a download by saving a `.crate` file to disk.
     ///
@@ -483,8 +489,13 @@ pub trait RegistryData {
     /// the given data to the on-disk cache.
     ///
     /// Returns a [`File`] handle to the `.crate` file, positioned at the start.
-    fn finish_download(&mut self, pkg: PackageId, checksum: &str, data: &[u8])
-        -> CargoResult<File>;
+    fn finish_download(
+        &mut self,
+        pkg: PackageId,
+        checksum: &str,
+        data: &[u8],
+        last_use: &mut LastUse,
+    ) -> CargoResult<File>;
 
     /// Returns whether or not the `.crate` file is already downloaded.
     fn is_crate_downloaded(&self, _pkg: PackageId) -> bool {
@@ -563,6 +574,7 @@ impl<'cfg> RegistrySource<'cfg> {
         yanked_whitelist: &HashSet<PackageId>,
     ) -> RegistrySource<'cfg> {
         RegistrySource {
+            name: name.to_string(),
             src_path: config.registry_source_path().join(name),
             config,
             source_id,
@@ -584,7 +596,12 @@ impl<'cfg> RegistrySource<'cfg> {
     /// compiled.
     ///
     /// No action is taken if the source looks like it's already unpacked.
-    fn unpack_package(&self, pkg: PackageId, tarball: &File) -> CargoResult<PathBuf> {
+    fn unpack_package(
+        &self,
+        pkg: PackageId,
+        tarball: &File,
+        last_use: &mut LastUse,
+    ) -> CargoResult<PathBuf> {
         // The `.cargo-ok` file is used to track if the source is already
         // unpacked.
         let package_dir = format!("{}-{}", pkg.name(), pkg.version());
@@ -593,6 +610,10 @@ impl<'cfg> RegistrySource<'cfg> {
         let path = dst.join(PACKAGE_SOURCE_LOCK);
         let path = self.config.assert_package_cache_locked(&path);
         let unpack_dir = path.parent().unwrap();
+        last_use.mark_used(
+            LastUseKind::RegistrySrc(self.name.clone()),
+            package_dir.clone(),
+        );
         if let Ok(meta) = path.metadata() {
             if meta.len() > 0 {
                 return Ok(unpack_dir.to_path_buf());
@@ -661,13 +682,18 @@ impl<'cfg> RegistrySource<'cfg> {
         Ok(())
     }
 
-    fn get_pkg(&mut self, package: PackageId, path: &File) -> CargoResult<Package> {
+    fn get_pkg(
+        &mut self,
+        package: PackageId,
+        path: &File,
+        last_use: &mut LastUse,
+    ) -> CargoResult<Package> {
         let path = self
-            .unpack_package(package, path)
+            .unpack_package(package, path, last_use)
             .with_context(|| format!("failed to unpack package `{}`", package))?;
         let mut src = PathSource::new(&path, self.source_id, self.config);
         src.update()?;
-        let mut pkg = match src.download(package)? {
+        let mut pkg = match src.download(package, last_use)? {
             MaybePackage::Ready(pkg) => pkg,
             MaybePackage::Download { .. } => unreachable!(),
         };
@@ -756,20 +782,31 @@ impl<'cfg> Source for RegistrySource<'cfg> {
         Ok(())
     }
 
-    fn download(&mut self, package: PackageId) -> CargoResult<MaybePackage> {
+    fn download(
+        &mut self,
+        package: PackageId,
+        last_use: &mut LastUse,
+    ) -> CargoResult<MaybePackage> {
         let hash = self.index.hash(package, &mut *self.ops)?;
-        match self.ops.download(package, hash)? {
-            MaybeLock::Ready(file) => self.get_pkg(package, &file).map(MaybePackage::Ready),
+        match self.ops.download(package, hash, last_use)? {
+            MaybeLock::Ready(file) => self
+                .get_pkg(package, &file, last_use)
+                .map(MaybePackage::Ready),
             MaybeLock::Download { url, descriptor } => {
                 Ok(MaybePackage::Download { url, descriptor })
             }
         }
     }
 
-    fn finish_download(&mut self, package: PackageId, data: Vec<u8>) -> CargoResult<Package> {
+    fn finish_download(
+        &mut self,
+        package: PackageId,
+        data: Vec<u8>,
+        last_use: &mut LastUse,
+    ) -> CargoResult<Package> {
         let hash = self.index.hash(package, &mut *self.ops)?;
-        let file = self.ops.finish_download(package, hash, &data)?;
-        self.get_pkg(package, &file)
+        let file = self.ops.finish_download(package, hash, &data, last_use)?;
+        self.get_pkg(package, &file, last_use)
     }
 
     fn fingerprint(&self, pkg: &Package) -> CargoResult<String> {

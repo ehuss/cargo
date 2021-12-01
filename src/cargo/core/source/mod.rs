@@ -2,7 +2,7 @@ use std::collections::hash_map::HashMap;
 use std::fmt;
 
 use crate::core::package::PackageSet;
-use crate::core::{Dependency, Package, PackageId, Summary};
+use crate::core::{Dependency, LastUse, Package, PackageId, Summary};
 use crate::util::{CargoResult, Config};
 
 mod source_id;
@@ -36,6 +36,7 @@ pub trait Source {
     /// whereas an `Index` source may return dependencies that have the same canonicalization.
     fn fuzzy_query(&mut self, dep: &Dependency, f: &mut dyn FnMut(Summary)) -> CargoResult<()>;
 
+    /// Variant of `query` that returns a `Vec` of results instead of using a callback.
     fn query_vec(&mut self, dep: &Dependency) -> CargoResult<Vec<Summary>> {
         let mut ret = Vec::new();
         self.query(dep, &mut |s| ret.push(s))?;
@@ -46,9 +47,25 @@ pub trait Source {
     /// versions and dependencies of packages managed by the `Source`.
     fn update(&mut self) -> CargoResult<()>;
 
-    /// Fetches the full package for each name and version specified.
-    fn download(&mut self, package: PackageId) -> CargoResult<MaybePackage>;
+    /// Starts the process to fetch a `Package` for the given `PackageId`.
+    ///
+    /// If the source already has the package available on disk, then it will
+    /// return immediately with `MaybePackage::Ready` with the `Package`.
+    /// Otherwise it will return a `MaybePackage::Download` to indicate the
+    /// URL to download the package (this is for remote registry sources
+    /// only).
+    ///
+    /// In the case where `MaybePackage::Download` is returned, then the
+    /// package downloader will call `finish_download` after the download has
+    /// finished.
+    fn download(&mut self, package: PackageId, last_use: &mut LastUse)
+        -> CargoResult<MaybePackage>;
 
+    /// Convenience method used to fetch a `Package` for the given
+    /// `PackageId`.
+    ///
+    /// This may trigger a download if necessary. This should only be used
+    /// when a single package is needed (as in the case for `cargo install`).
     fn download_now(self: Box<Self>, package: PackageId, config: &Config) -> CargoResult<Package>
     where
         Self: std::marker::Sized,
@@ -60,7 +77,18 @@ pub trait Source {
         Ok(Package::clone(pkg))
     }
 
-    fn finish_download(&mut self, package: PackageId, contents: Vec<u8>) -> CargoResult<Package>;
+    /// Gives the source the downloaded `.crate` file.
+    ///
+    /// When a source has returned `MaybePackage::Download` in the `download`
+    /// method, then this function will be called with the results of the
+    /// download of the given URL. The source is responsible for saving to
+    /// disk, and returning the appropriate `Package` method`.
+    fn finish_download(
+        &mut self,
+        package: PackageId,
+        contents: Vec<u8>,
+        last_use: &mut LastUse,
+    ) -> CargoResult<Package>;
 
     /// Generates a unique string which represents the fingerprint of the
     /// current state of the source.
@@ -145,12 +173,17 @@ impl<'a, T: Source + ?Sized + 'a> Source for Box<T> {
     }
 
     /// Forwards to `Source::download`.
-    fn download(&mut self, id: PackageId) -> CargoResult<MaybePackage> {
-        (**self).download(id)
+    fn download(&mut self, id: PackageId, last_use: &mut LastUse) -> CargoResult<MaybePackage> {
+        (**self).download(id, last_use)
     }
 
-    fn finish_download(&mut self, id: PackageId, data: Vec<u8>) -> CargoResult<Package> {
-        (**self).finish_download(id, data)
+    fn finish_download(
+        &mut self,
+        id: PackageId,
+        data: Vec<u8>,
+        last_use: &mut LastUse,
+    ) -> CargoResult<Package> {
+        (**self).finish_download(id, data, last_use)
     }
 
     /// Forwards to `Source::fingerprint`.
@@ -209,12 +242,17 @@ impl<'a, T: Source + ?Sized + 'a> Source for &'a mut T {
         (**self).update()
     }
 
-    fn download(&mut self, id: PackageId) -> CargoResult<MaybePackage> {
-        (**self).download(id)
+    fn download(&mut self, id: PackageId, last_use: &mut LastUse) -> CargoResult<MaybePackage> {
+        (**self).download(id, last_use)
     }
 
-    fn finish_download(&mut self, id: PackageId, data: Vec<u8>) -> CargoResult<Package> {
-        (**self).finish_download(id, data)
+    fn finish_download(
+        &mut self,
+        id: PackageId,
+        data: Vec<u8>,
+        last_use: &mut LastUse,
+    ) -> CargoResult<Package> {
+        (**self).finish_download(id, data, last_use)
     }
 
     fn fingerprint(&self, pkg: &Package) -> CargoResult<String> {

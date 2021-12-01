@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::source::MaybePackage;
-use crate::core::{Dependency, Package, PackageId, Source, SourceId, Summary};
+use crate::core::{Dependency, LastUse, Package, PackageId, Source, SourceId, Summary};
 use crate::ops;
 use crate::util::{internal, CargoResult, Config};
 use anyhow::Context as _;
@@ -507,7 +507,7 @@ impl<'cfg> Source for PathSource<'cfg> {
         Ok(())
     }
 
-    fn download(&mut self, id: PackageId) -> CargoResult<MaybePackage> {
+    fn download(&mut self, id: PackageId, _last_use: &mut LastUse) -> CargoResult<MaybePackage> {
         trace!("getting packages; id={}", id);
 
         let pkg = self.packages.iter().find(|pkg| pkg.package_id() == id);
@@ -516,7 +516,12 @@ impl<'cfg> Source for PathSource<'cfg> {
             .ok_or_else(|| internal(format!("failed to find {} in path source", id)))
     }
 
-    fn finish_download(&mut self, _id: PackageId, _data: Vec<u8>) -> CargoResult<Package> {
+    fn finish_download(
+        &mut self,
+        _id: PackageId,
+        _data: Vec<u8>,
+        _last_use: &mut LastUse,
+    ) -> CargoResult<Package> {
         panic!("no download should have started")
     }
 

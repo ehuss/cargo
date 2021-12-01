@@ -1,4 +1,4 @@
-use crate::core::{GitReference, PackageId, SourceId};
+use crate::core::{GitReference, LastUse, LastUseKind, PackageId, SourceId};
 use crate::sources::git;
 use crate::sources::registry::MaybeLock;
 use crate::sources::registry::{
@@ -25,6 +25,7 @@ use std::str;
 /// crates.io). The git index is cloned locally, and `.crate` files are
 /// downloaded as needed and cached locally.
 pub struct RemoteRegistry<'cfg> {
+    name: String,
     index_path: Filesystem,
     /// Path to the cache of `.crate` files (`$CARGO_HOME/registry/path/$REG-HASH`).
     cache_path: Filesystem,
@@ -40,6 +41,7 @@ pub struct RemoteRegistry<'cfg> {
 impl<'cfg> RemoteRegistry<'cfg> {
     pub fn new(source_id: SourceId, config: &'cfg Config, name: &str) -> RemoteRegistry<'cfg> {
         RemoteRegistry {
+            name: name.to_string(),
             index_path: config.registry_index_path().join(name),
             cache_path: config.registry_cache_path().join(name),
             source_id,
@@ -244,8 +246,18 @@ impl<'cfg> RegistryData for RemoteRegistry<'cfg> {
         Ok(())
     }
 
-    fn download(&mut self, pkg: PackageId, checksum: &str) -> CargoResult<MaybeLock> {
+    fn download(
+        &mut self,
+        pkg: PackageId,
+        checksum: &str,
+        last_use: &mut LastUse,
+    ) -> CargoResult<MaybeLock> {
         let filename = self.filename(pkg);
+        last_use.mark_used(
+            LastUseKind::RegistryCrate(self.name.clone()),
+            filename.to_string(),
+        );
+        last_use.mark_used(LastUseKind::RegistryIndex, self.name.clone());
 
         // Attempt to open an read-only copy first to avoid an exclusive write
         // lock and also work with read-only filesystems. Note that we check the
@@ -291,6 +303,7 @@ impl<'cfg> RegistryData for RemoteRegistry<'cfg> {
         pkg: PackageId,
         checksum: &str,
         data: &[u8],
+        _last_use: &mut LastUse,
     ) -> CargoResult<File> {
         // Verify what we just downloaded
         let actual = Sha256::new().update(data).finish_hex();

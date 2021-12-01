@@ -1,6 +1,6 @@
 use crate::core::source::{MaybePackage, Source, SourceId};
 use crate::core::GitReference;
-use crate::core::{Dependency, Package, PackageId, Summary};
+use crate::core::{Dependency, LastUse, LastUseKind, Package, PackageId, Summary};
 use crate::sources::git::utils::GitRemote;
 use crate::sources::PathSource;
 use crate::util::errors::CargoResult;
@@ -17,6 +17,7 @@ pub struct GitSource<'cfg> {
     locked_rev: Option<git2::Oid>,
     source_id: SourceId,
     path_source: Option<PathSource<'cfg>>,
+    short_id: Option<String>,
     ident: String,
     config: &'cfg Config,
 }
@@ -39,6 +40,7 @@ impl<'cfg> GitSource<'cfg> {
             },
             source_id,
             path_source: None,
+            short_id: None,
             ident,
             config,
         };
@@ -179,11 +181,20 @@ impl<'cfg> Source for GitSource<'cfg> {
         let path_source = PathSource::new_recursive(&checkout_path, source_id, self.config);
 
         self.path_source = Some(path_source);
+        self.short_id = Some(short_id.as_str().to_string());
         self.locked_rev = Some(actual_rev);
         self.path_source.as_mut().unwrap().update()
     }
 
-    fn download(&mut self, id: PackageId) -> CargoResult<MaybePackage> {
+    fn download(&mut self, id: PackageId, last_use: &mut LastUse) -> CargoResult<MaybePackage> {
+        last_use.mark_used(LastUseKind::GitDb, self.ident.clone());
+        last_use.mark_used(
+            LastUseKind::GitCheckout(self.ident.clone()),
+            self.short_id
+                .as_ref()
+                .expect("update before download")
+                .clone(),
+        );
         trace!(
             "getting packages for package ID `{}` from `{:?}`",
             id,
@@ -192,10 +203,15 @@ impl<'cfg> Source for GitSource<'cfg> {
         self.path_source
             .as_mut()
             .expect("BUG: `update()` must be called before `get()`")
-            .download(id)
+            .download(id, last_use)
     }
 
-    fn finish_download(&mut self, _id: PackageId, _data: Vec<u8>) -> CargoResult<Package> {
+    fn finish_download(
+        &mut self,
+        _id: PackageId,
+        _data: Vec<u8>,
+        _last_use: &mut LastUse,
+    ) -> CargoResult<Package> {
         panic!("no download should have started")
     }
 

@@ -1,5 +1,6 @@
 pub use self::dependency::Dependency;
 pub use self::features::{CliUnstable, Edition, Feature, Features};
+pub use self::last_use::{LastUse, LastUseKind};
 pub use self::manifest::{EitherManifest, VirtualManifest};
 pub use self::manifest::{Manifest, Target, TargetKind};
 pub use self::package::{Package, PackageSet};
@@ -15,6 +16,8 @@ pub use self::workspace::{MaybePackage, Workspace, WorkspaceConfig, WorkspaceRoo
 pub mod compiler;
 pub mod dependency;
 pub mod features;
+#[path = "last_use_sqlite.rs"]
+mod last_use;
 pub mod manifest;
 pub mod package;
 pub mod package_id;

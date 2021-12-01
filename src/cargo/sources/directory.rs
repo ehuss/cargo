@@ -3,7 +3,7 @@ use std::fmt::{self, Debug, Formatter};
 use std::path::{Path, PathBuf};
 
 use crate::core::source::MaybePackage;
-use crate::core::{Dependency, Package, PackageId, Source, SourceId, Summary};
+use crate::core::{Dependency, LastUse, Package, PackageId, Source, SourceId, Summary};
 use crate::sources::PathSource;
 use crate::util::errors::CargoResult;
 use crate::util::Config;
@@ -146,7 +146,7 @@ impl<'cfg> Source for DirectorySource<'cfg> {
         Ok(())
     }
 
-    fn download(&mut self, id: PackageId) -> CargoResult<MaybePackage> {
+    fn download(&mut self, id: PackageId, _last_use: &mut LastUse) -> CargoResult<MaybePackage> {
         self.packages
             .get(&id)
             .map(|p| &p.0)
@@ -155,7 +155,12 @@ impl<'cfg> Source for DirectorySource<'cfg> {
             .ok_or_else(|| anyhow::format_err!("failed to find package with id: {}", id))
     }
 
-    fn finish_download(&mut self, _id: PackageId, _data: Vec<u8>) -> CargoResult<Package> {
+    fn finish_download(
+        &mut self,
+        _id: PackageId,
+        _data: Vec<u8>,
+        _last_use: &mut LastUse,
+    ) -> CargoResult<Package> {
         panic!("no downloads to do")
     }
 
