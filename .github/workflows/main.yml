@@ -34,22 +34,22 @@ jobs:
     strategy:
       matrix:
         include:
-        - os: ubuntu-latest
-          rust: stable
-          other: i686-unknown-linux-gnu
-        - os: ubuntu-latest
-          rust: beta
-          other: i686-unknown-linux-gnu
-        - os: ubuntu-latest
-          rust: nightly
-          other: i686-unknown-linux-gnu
-        - os: macos-latest
-          rust: stable
-          other: x86_64-apple-ios
-        - os: windows-latest
+        # - os: ubuntu-latest
+        #   rust: stable
+        #   other: i686-unknown-linux-gnu
+        # - os: ubuntu-latest
+        #   rust: beta
+        #   other: i686-unknown-linux-gnu
+        # - os: ubuntu-latest
+        #   rust: nightly
+        #   other: i686-unknown-linux-gnu
+        # - os: macos-latest
+        #   rust: stable
+        #   other: x86_64-apple-ios
+        - os: windows-2022
           rust: stable-msvc
           other: i686-pc-windows-msvc
-        - os: windows-latest
+        - os: windows-2022
           rust: nightly-gnu
           other: i686-pc-windows-gnu
     steps:
@@ -80,7 +80,7 @@ jobs:
     - run: cargo build --manifest-path crates/credential/cargo-credential-macos-keychain/Cargo.toml
       if: matrix.os == 'macos-latest'
     - run: cargo build --manifest-path crates/credential/cargo-credential-wincred/Cargo.toml
-      if: matrix.os == 'windows-latest'
+      if: matrix.os == 'windows-2022'
     - name: Check benchmarks
       env:
         # Share the target dir to try to cache a few build-time deps.
@@ -93,56 +93,56 @@ jobs:
     - name: Fetch smoke test
       run: ci/fetch-smoke-test.sh
 
-  resolver:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - run: rustup update stable && rustup default stable
-    - run: cargo test --manifest-path crates/resolver-tests/Cargo.toml
+  # resolver:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - uses: actions/checkout@v2
+  #   - run: rustup update stable && rustup default stable
+  #   - run: cargo test --manifest-path crates/resolver-tests/Cargo.toml
 
-  build_std:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - run: rustup update nightly && rustup default nightly
-    - run: rustup component add rust-src
-    - run: cargo build
-    - run: cargo test --test build-std
-      env:
-        CARGO_RUN_BUILD_STD_TESTS: 1
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - run: rustup update nightly && rustup default nightly
-    - run: rustup update stable
-    - run: rustup component add rust-docs
-    - run: ci/validate-man.sh
-    # This requires rustfmt, use stable.
-    - run: cd src/doc/semver-check && cargo +stable run
-    - run: |
-        mkdir mdbook
-        curl -Lf https://github.com/rust-lang/mdBook/releases/download/v0.4.5/mdbook-v0.4.5-x86_64-unknown-linux-gnu.tar.gz | tar -xz --directory=./mdbook
-        echo `pwd`/mdbook >> $GITHUB_PATH
-    - run: cargo doc --no-deps
-    - run: cd src/doc && mdbook build --dest-dir ../../target/doc
-    - run: |
-        cd src/doc
-        curl -sSLo linkcheck.sh \
-          https://raw.githubusercontent.com/rust-lang/rust/master/src/tools/linkchecker/linkcheck.sh
-        sh linkcheck.sh --all cargo
+  # build_std:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - uses: actions/checkout@v2
+  #   - run: rustup update nightly && rustup default nightly
+  #   - run: rustup component add rust-src
+  #   - run: cargo build
+  #   - run: cargo test --test build-std
+  #     env:
+  #       CARGO_RUN_BUILD_STD_TESTS: 1
+  # docs:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - uses: actions/checkout@v2
+  #   - run: rustup update nightly && rustup default nightly
+  #   - run: rustup update stable
+  #   - run: rustup component add rust-docs
+  #   - run: ci/validate-man.sh
+  #   # This requires rustfmt, use stable.
+  #   - run: cd src/doc/semver-check && cargo +stable run
+  #   - run: |
+  #       mkdir mdbook
+  #       curl -Lf https://github.com/rust-lang/mdBook/releases/download/v0.4.5/mdbook-v0.4.5-x86_64-unknown-linux-gnu.tar.gz | tar -xz --directory=./mdbook
+  #       echo `pwd`/mdbook >> $GITHUB_PATH
+  #   - run: cargo doc --no-deps
+  #   - run: cd src/doc && mdbook build --dest-dir ../../target/doc
+  #   - run: |
+  #       cd src/doc
+  #       curl -sSLo linkcheck.sh \
+  #         https://raw.githubusercontent.com/rust-lang/rust/master/src/tools/linkchecker/linkcheck.sh
+  #       sh linkcheck.sh --all cargo
 
-  success:
-    name: bors build finished
-    needs: [docs, rustfmt, test, resolver, build_std]
-    runs-on: ubuntu-latest
-    if: "success() && github.event_name == 'push' && github.ref == 'refs/heads/auto-cargo'"
-    steps:
-    - run: echo ok
-  failure:
-    name: bors build finished
-    needs: [docs, rustfmt, test, resolver, build_std]
-    runs-on: ubuntu-latest
-    if: "!success() && github.event_name == 'push' && github.ref == 'refs/heads/auto-cargo'"
-    steps:
-    - run: exit 1
+  # success:
+  #   name: bors build finished
+  #   needs: [docs, rustfmt, test, resolver, build_std]
+  #   runs-on: ubuntu-latest
+  #   if: "success() && github.event_name == 'push' && github.ref == 'refs/heads/auto-cargo'"
+  #   steps:
+  #   - run: echo ok
+  # failure:
+  #   name: bors build finished
+  #   needs: [docs, rustfmt, test, resolver, build_std]
+  #   runs-on: ubuntu-latest
+  #   if: "!success() && github.event_name == 'push' && github.ref == 'refs/heads/auto-cargo'"
+  #   steps:
+  #   - run: exit 1
