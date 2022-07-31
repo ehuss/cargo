@@ -59,14 +59,15 @@ fn jobserver_exists() {
 
 #[cargo_test]
 fn makes_jobserver_used() {
-    let make = if cfg!(windows) {
-        "mingw32-make"
-    } else {
-        "make"
-    };
-    if Command::new(make).arg("--version").output().is_err() {
-        return;
-    }
+    // let make = if cfg!(windows) {
+    //     "mingw32-make"
+    // } else {
+    //     "make"
+    // };
+    // if Command::new(make).arg("--version").output().is_err() {
+    //     return;
+    // }
+    let make = "make";
 
     let p = project()
         .file(
@@ -171,14 +172,15 @@ all:
 
 #[cargo_test]
 fn jobserver_and_j() {
-    let make = if cfg!(windows) {
-        "mingw32-make"
-    } else {
-        "make"
-    };
-    if Command::new(make).arg("--version").output().is_err() {
-        return;
-    }
+    // let make = if cfg!(windows) {
+    //     "mingw32-make"
+    // } else {
+    //     "make"
+    // };
+    // if Command::new(make).arg("--version").output().is_err() {
+    //     return;
+    // }
+    let make = "make";
 
     let p = project()
         .file("src/lib.rs", "")
