@@ -21,6 +21,8 @@ if [[ $(rustc -Vv | grep host:) != *windows* ]]; then
     export LIBZ_SYS_STATIC=1
 fi
 
+cargo update
+cargo update -p curl-sys --precise 0.4.56
 cargo build --features "$FEATURES"
 export CARGO_HOME=$RUNNER_TEMP/chome
 target/debug/cargo -Vv
