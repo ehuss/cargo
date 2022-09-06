@@ -54,7 +54,7 @@ jobs:
         #   rust: stable
         #   other: x86_64-apple-ios
         - name: Windows x86_64 MSVC stable
-          os: windows-latest
+          os: windows-2019
           rust: stable-msvc
           other: i686-pc-windows-msvc
         # - name: Windows x86_64 gnu nightly
