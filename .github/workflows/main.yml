@@ -35,25 +35,26 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 1
       CARGO_INCREMENTAL: 0
       CARGO_PUBLIC_NETWORK_TESTS: 1
+      CARGO_CI_FEATURES: deny-warnings,vendored-openssl
     strategy:
       matrix:
         include:
-        - name: Linux x86_64 stable
-          os: ubuntu-latest
-          rust: stable
-          other: i686-unknown-linux-gnu
-        - name: Linux x86_64 beta
-          os: ubuntu-latest
-          rust: beta
-          other: i686-unknown-linux-gnu
-        - name: Linux x86_64 nightly
-          os: ubuntu-latest
-          rust: nightly
-          other: i686-unknown-linux-gnu
-        - name: macOS x86_64 stable
-          os: macos-latest
-          rust: stable
-          other: x86_64-apple-ios
+        # - name: Linux x86_64 stable
+        #   os: ubuntu-latest
+        #   rust: stable
+        #   other: i686-unknown-linux-gnu
+        # - name: Linux x86_64 beta
+        #   os: ubuntu-latest
+        #   rust: beta
+        #   other: i686-unknown-linux-gnu
+        # - name: Linux x86_64 nightly
+        #   os: ubuntu-latest
+        #   rust: nightly
+        #   other: i686-unknown-linux-gnu
+        # - name: macOS x86_64 stable
+        #   os: macos-latest
+        #   rust: stable
+        #   other: x86_64-apple-ios
         - name: Windows x86_64 MSVC stable
           os: windows-latest
           rust: stable-msvc
@@ -78,12 +79,26 @@ jobs:
     - run: sudo apt update -y && sudo apt install gcc-multilib libsecret-1-0 libsecret-1-dev -y
       if: matrix.os == 'ubuntu-latest'
     - run: rustup component add rustfmt || echo "rustfmt not available"
+    - run: |
+        perl --version
+        which perl
+        echo $PATH
+    - name: Configure Perl (for OpenSSL)
+      # The PATH for bash uses the msys perl which does not work with
+      # Windows-style paths needed for building OpenSSL.
+      run: echo C:\Strawberry\perl\bin >> $GITHUB_PATH
+    - run: |
+        perl --version
+        which perl
+        echo $PATH
     - name: Configure extra test environment
       run: echo CARGO_CONTAINER_TESTS=1 >> $GITHUB_ENV
       if: matrix.os == 'ubuntu-latest'
 
+    - run: perl --version
+
     # Deny warnings on CI to avoid warnings getting into the codebase.
-    - run: cargo test --features 'deny-warnings'
+    - run: cargo test --features $CARGO_CI_FEATURES
     # The testsuite generates a huge amount of data, and fetch-smoke-test was
     # running out of disk space.
     - name: Clear test output
@@ -97,8 +112,8 @@ jobs:
       run: |
         # This only tests `cargo fix` because fix-proxy-mode is one of the most
         # complicated subprocess management in Cargo.
-        cargo test --test testsuite --features 'deny-warnings' -- fix::
-    - run: cargo test --features 'deny-warnings' --manifest-path crates/cargo-test-support/Cargo.toml
+        cargo test --test testsuite --features $CARGO_CI_FEATURES -- fix::
+    - run: cargo test --features $CARGO_CI_FEATURES --manifest-path crates/cargo-test-support/Cargo.toml
       env:
         CARGO_TARGET_DIR: target
     - run: cargo test -p cargo-platform
