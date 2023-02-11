@@ -1639,8 +1639,20 @@ impl Config {
     /// Looks for a path for `tool` in an environment variable or config path, defaulting to `tool`
     /// as a path.
     fn get_tool(&self, tool: &str, from_config: &Option<ConfigRelativePath>) -> PathBuf {
-        self.maybe_get_tool(tool, from_config)
-            .unwrap_or_else(|| PathBuf::from(tool))
+        if let Some(p) = self.maybe_get_tool(tool, from_config) {
+            return p;
+        }
+        if self.env.contains_key("ERIC_RUSTUP_TEST") {
+            if let Some(p) = self.env.get("RUSTUP_TOOLCHAIN_DIR") {
+                let mut path = PathBuf::from(p);
+                path.push("bin");
+                path.push(tool);
+                if path.exists() {
+                    return path;
+                }
+            }
+        }
+        PathBuf::from(tool)
     }
 
     pub fn jobserver_from_env(&self) -> Option<&jobserver::Client> {
