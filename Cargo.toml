@@ -1,3 +1,18 @@
+[workspace]
+members = [
+  "crates/cargo-platform",
+  "crates/cargo-test-macro",
+  "crates/cargo-test-support",
+  "crates/cargo-util",
+  "crates/crates-io",
+  "crates/credential/*",
+  "crates/home",
+  "crates/mdman",
+  #"crates/resolver-tests",
+]
+
+resolver = "2"
+
 [package]
 name = "cargo"
 version = "0.70.0"
@@ -75,11 +90,6 @@ unicode-width = "0.1.5"
 unicode-xid = "0.2.0"
 url = "2.2.2"
 walkdir = "2.2"
-
-# A noop dependency that changes in the Rust repository, it's a bit of a hack.
-# See the `src/tools/rustc-workspace-hack/README.md` file in `rust-lang/rust`
-# for more information.
-rustc-workspace-hack = "1.0.0"
 
 [target.'cfg(windows)'.dependencies]
 fwdansi = "1.1.0"
