@@ -1049,8 +1049,21 @@ fn basic() {
     let ex = p.build_dir().join("doc/src/ex/ex.rs.html");
     if !ex.exists() {
         for entry in walkdir::WalkDir::new(p.root()) {
-            println!("{}", entry.unwrap().path().display());
+            let entry = entry.unwrap();
+            println!("{} {}", entry.path().display(), entry.metadata().unwrap().len());
         }
+        let foo = std::fs::read_to_string(p.root().join("target/doc/foo/fn.foo.html")).unwrap();
+        eprintln!("foo:\n{foo}");
+        let ex = p.glob("target/debug/deps/foo-*.examples").next().unwrap().unwrap();
+        let data = std::fs::read(&ex).unwrap();
+        let s = String::from_utf8(
+            data
+               .iter()
+               .map(|b| std::ascii::escape_default(*b))
+               .flatten()
+               .collect(),
+        ).unwrap();
+        eprintln!("data:\n{s}");
         panic!("cannot find {ex:?}");
     }
 }
