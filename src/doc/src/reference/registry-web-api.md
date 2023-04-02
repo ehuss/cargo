@@ -177,6 +177,10 @@ A successful response includes the JSON object:
 }
 ```
 
+It is not required for the index to be updated before the successful response is sent.
+After a successful response, Cargo will poll the index for a short period of time to identify that the new crate has been added.
+If the crate does not appear in the index after a short period of time, then Cargo will display a warning letting the user know that the new crate is not yet available.
+
 ### Yank
 
 - Endpoint: `/api/v1/crates/{crate_name}/{version}/yank`
