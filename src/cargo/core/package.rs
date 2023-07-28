@@ -478,6 +478,7 @@ impl<'cfg> PackageSet<'cfg> {
 
     pub fn get_many(&self, ids: impl IntoIterator<Item = PackageId>) -> CargoResult<Vec<&Package>> {
         let mut pkgs = Vec::new();
+        let _lock = self.config.acquire_package_cache_lock()?;
         let mut downloads = self.enable_download()?;
         for id in ids {
             pkgs.extend(downloads.start(id)?);
@@ -486,6 +487,11 @@ impl<'cfg> PackageSet<'cfg> {
             pkgs.push(downloads.wait()?);
         }
         downloads.success = true;
+        drop(downloads);
+
+        let mut last_use = self.config.global_last_use()?;
+        last_use.save_no_error(self.config);
+        drop(last_use);
         Ok(pkgs)
     }
 

@@ -26,3 +26,7 @@ harness = false
 [[bench]]
 name = "workspace_initialization"
 harness = false
+
+[[bench]]
+name = "last_use"
+harness = false

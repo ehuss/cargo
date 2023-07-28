@@ -160,6 +160,7 @@ pasetors.workspace = true
 pathdiff.workspace = true
 pulldown-cmark.workspace = true
 rand.workspace = true
+rusqlite = { version = "0.29.0", features = ["bundled"] }
 rustfix.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }

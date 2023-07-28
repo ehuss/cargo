@@ -19,6 +19,8 @@ pub use crate::util::toml::InheritableFields;
 pub mod compiler;
 pub mod dependency;
 pub mod features;
+pub mod gc;
+pub mod last_use;
 pub mod manifest;
 pub mod package;
 pub mod package_id;

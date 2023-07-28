@@ -1,5 +1,6 @@
 //! See [GitSource].
 
+use crate::core::last_use;
 use crate::core::source::{MaybePackage, QueryKind, Source, SourceId};
 use crate::core::GitReference;
 use crate::core::{Dependency, Package, PackageId, Summary};
@@ -70,6 +71,7 @@ pub struct GitSource<'cfg> {
     source_id: SourceId,
     /// The underlying path source to discover packages inside the Git repository.
     path_source: Option<PathSource<'cfg>>,
+    short_id: Option<String>,
     /// The identifer of this source for Cargo's Git cache directory.
     /// See [`ident`] for more.
     ident: String,
@@ -106,6 +108,7 @@ impl<'cfg> GitSource<'cfg> {
             locked_rev,
             source_id,
             path_source: None,
+            short_id: None,
             ident,
             config,
             quiet: false,
@@ -288,11 +291,23 @@ impl<'cfg> Source for GitSource<'cfg> {
         let path_source = PathSource::new_recursive(&checkout_path, source_id, self.config);
 
         self.path_source = Some(path_source);
+        self.short_id = Some(short_id.as_str().to_string());
         self.locked_rev = Some(actual_rev);
         self.path_source.as_mut().unwrap().update()
     }
 
     fn download(&mut self, id: PackageId) -> CargoResult<MaybePackage> {
+        let short_name = self
+            .short_id
+            .as_ref()
+            .expect("update before download")
+            .clone();
+        self.config
+            .global_last_use()?
+            .mark_git_checkout_used(last_use::GitCheckout {
+                encoded_git_name: self.ident.clone(),
+                short_name,
+            });
         trace!(
             "getting packages for package ID `{}` from `{:?}`",
             id,

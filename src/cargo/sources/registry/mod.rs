@@ -201,6 +201,7 @@ use tar::Archive;
 use tracing::debug;
 
 use crate::core::dependency::Dependency;
+use crate::core::last_use;
 use crate::core::source::MaybePackage;
 use crate::core::{Package, PackageId, QueryKind, Source, SourceId, Summary};
 use crate::sources::PathSource;
@@ -237,6 +238,7 @@ struct LockMetadata {
 ///
 /// For general concepts of registries, see the [module-level documentation](crate::sources::registry).
 pub struct RegistrySource<'cfg> {
+    name: String,
     /// The unique identifier of this source.
     source_id: SourceId,
     /// The path where crate files are extracted (`$CARGO_HOME/registry/src/$REG-HASH`).
@@ -512,6 +514,7 @@ impl<'cfg> RegistrySource<'cfg> {
         yanked_whitelist: &HashSet<PackageId>,
     ) -> RegistrySource<'cfg> {
         RegistrySource {
+            name: name.to_string(),
             src_path: config.registry_source_path().join(name),
             config,
             source_id,
@@ -582,6 +585,12 @@ impl<'cfg> RegistrySource<'cfg> {
         let path = dst.join(PACKAGE_SOURCE_LOCK);
         let path = self.config.assert_package_cache_locked(&path);
         let unpack_dir = path.parent().unwrap();
+        self.config
+            .global_last_use()?
+            .mark_registry_src_used(last_use::RegistrySrc {
+                encoded_registry_name: self.name.clone(),
+                package_dir: package_dir.clone(),
+            });
         match fs::read_to_string(path) {
             Ok(ok) => match serde_json::from_str::<LockMetadata>(&ok) {
                 Ok(lock_meta) if lock_meta.v == 1 => {

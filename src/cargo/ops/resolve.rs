@@ -529,6 +529,7 @@ pub fn resolve_with_previous<'cfg>(
     if let Some(previous) = previous {
         resolved.merge_from(previous)?;
     }
+    ws.config().global_last_use()?.save_no_error(ws.config());
     Ok(resolved)
 }
 

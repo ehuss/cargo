@@ -1,5 +1,6 @@
 //! Access to a Git index based registry. See [`RemoteRegistry`] for details.
 
+use crate::core::last_use;
 use crate::core::{GitReference, PackageId, SourceId};
 use crate::sources::git;
 use crate::sources::git::fetch::RemoteKind;
@@ -46,6 +47,7 @@ use tracing::{debug, trace};
 ///
 /// [`HttpRegistry`]: super::http_remote::HttpRegistry
 pub struct RemoteRegistry<'cfg> {
+    name: String,
     /// Path to the registry index (`$CARGO_HOME/registry/index/$REG-HASH`).
     index_path: Filesystem,
     /// Path to the cache of `.crate` files (`$CARGO_HOME/registry/cache/$REG-HASH`).
@@ -86,6 +88,7 @@ impl<'cfg> RemoteRegistry<'cfg> {
     ///   registry index are stored. Expect to be unique.
     pub fn new(source_id: SourceId, config: &'cfg Config, name: &str) -> RemoteRegistry<'cfg> {
         RemoteRegistry {
+            name: name.to_string(),
             index_path: config.registry_index_path().join(name),
             cache_path: config.registry_cache_path().join(name),
             source_id,
@@ -208,6 +211,11 @@ impl<'cfg> RemoteRegistry<'cfg> {
 impl<'cfg> RegistryData for RemoteRegistry<'cfg> {
     fn prepare(&self) -> CargoResult<()> {
         self.repo()?;
+        self.config
+            .global_last_use()?
+            .mark_registry_index_used(last_use::RegistryIndex {
+                encoded_registry_name: self.name.clone(),
+            });
         Ok(())
     }
 
@@ -396,6 +404,13 @@ impl<'cfg> RegistryData for RemoteRegistry<'cfg> {
                 Poll::Ready(cfg) => break cfg.unwrap(),
             }
         };
+
+        self.config
+            .global_last_use()?
+            .mark_registry_crate_used(last_use::RegistryCrate {
+                encoded_registry_name: self.name.clone(),
+                crate_filename: pkg.tarball_name(),
+            });
 
         download::download(
             &self.cache_path,

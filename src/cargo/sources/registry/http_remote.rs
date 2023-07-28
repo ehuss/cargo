@@ -1,5 +1,6 @@
 //! Access to a HTTP-based crate registry. See [`HttpRegistry`] for details.
 
+use crate::core::last_use;
 use crate::core::{PackageId, SourceId};
 use crate::sources::registry::download;
 use crate::sources::registry::MaybeLock;
@@ -51,6 +52,7 @@ const UNKNOWN: &'static str = "Unknown";
 ///
 /// [RFC 2789]: https://github.com/rust-lang/rfcs/pull/2789
 pub struct HttpRegistry<'cfg> {
+    name: String,
     /// Path to the registry index (`$CARGO_HOME/registry/index/$REG-HASH`).
     ///
     /// To be fair, `HttpRegistry` doesn't store the registry index it
@@ -198,6 +200,7 @@ impl<'cfg> HttpRegistry<'cfg> {
             .expect("a url with the sparse+ stripped should still be valid");
 
         Ok(HttpRegistry {
+            name: name.to_string(),
             index_path: config.registry_index_path().join(name),
             cache_path: config.registry_cache_path().join(name),
             source_id,
@@ -453,6 +456,11 @@ impl<'cfg> HttpRegistry<'cfg> {
 
 impl<'cfg> RegistryData for HttpRegistry<'cfg> {
     fn prepare(&self) -> CargoResult<()> {
+        self.config
+            .global_last_use()?
+            .mark_registry_index_used(last_use::RegistryIndex {
+                encoded_registry_name: self.name.clone(),
+            });
         Ok(())
     }
 
@@ -751,6 +759,14 @@ impl<'cfg> RegistryData for HttpRegistry<'cfg> {
                 Poll::Ready(cfg) => break cfg.to_owned(),
             }
         };
+
+        self.config
+            .global_last_use()?
+            .mark_registry_crate_used(last_use::RegistryCrate {
+                encoded_registry_name: self.name.clone(),
+                crate_filename: pkg.tarball_name(),
+            });
+
         download::download(
             &self.cache_path,
             &self.config,

@@ -103,6 +103,7 @@ mod inheritable_workspace_fields;
 mod install;
 mod install_upgrade;
 mod jobserver;
+mod last_use;
 mod lints;
 mod list_availables;
 mod local_registry;

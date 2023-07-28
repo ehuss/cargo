@@ -67,6 +67,7 @@ use std::time::Instant;
 
 use self::ConfigValue as CV;
 use crate::core::compiler::rustdoc::RustdocExternMap;
+use crate::core::last_use::GlobalLastUse;
 use crate::core::shell::Verbosity;
 use crate::core::{features, CliUnstable, Shell, SourceId, Workspace, WorkspaceRootConfig};
 use crate::ops::RegistryCredentialConfig;
@@ -243,6 +244,7 @@ pub struct Config {
     pub nightly_features_allowed: bool,
     /// WorkspaceRootConfigs that have been found
     pub ws_roots: RefCell<HashMap<PathBuf, WorkspaceRootConfig>>,
+    global_last_use: LazyCell<RefCell<GlobalLastUse>>,
 }
 
 impl Config {
@@ -316,6 +318,7 @@ impl Config {
             env_config: LazyCell::new(),
             nightly_features_allowed: matches!(&*features::channel(), "nightly" | "dev"),
             ws_roots: RefCell::new(HashMap::new()),
+            global_last_use: LazyCell::new(),
         }
     }
 
@@ -1951,6 +1954,13 @@ impl Config {
     }
 
     pub fn release_package_cache_lock(&self) {}
+
+    pub fn global_last_use(&self) -> CargoResult<RefMut<'_, GlobalLastUse>> {
+        let last_use = self
+            .global_last_use
+            .try_borrow_with(|| Ok::<_, anyhow::Error>(RefCell::new(GlobalLastUse::new(self)?)))?;
+        Ok(last_use.borrow_mut())
+    }
 }
 
 /// Internal error for serde errors.

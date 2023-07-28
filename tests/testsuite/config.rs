@@ -75,7 +75,7 @@ impl ConfigBuilder {
         let output = Box::new(fs::File::create(paths::root().join("shell.out")).unwrap());
         let shell = Shell::from_write(output);
         let cwd = self.cwd.clone().unwrap_or_else(|| paths::root());
-        let homedir = paths::home();
+        let homedir = paths::home().join(".cargo");
         let mut config = Config::new(shell, cwd, homedir);
         config.nightly_features_allowed = self.enable_nightly_features || !self.unstable.is_empty();
         config.set_env(self.env.clone());
