@@ -8,6 +8,7 @@ use cargo_credential::Operation;
 use cargo_util::registry::make_dep_path;
 use cargo_util::Sha256;
 
+use crate::core::last_use;
 use crate::core::PackageId;
 use crate::sources::registry::MaybeLock;
 use crate::sources::registry::RegistryConfig;
@@ -33,6 +34,7 @@ const CHECKSUM_TEMPLATE: &str = "{sha256-checksum}";
 pub(super) fn download(
     cache_path: &Filesystem,
     config: &Config,
+    encoded_registry_name: String,
     pkg: PackageId,
     checksum: &str,
     registry_config: RegistryConfig,
@@ -49,6 +51,13 @@ pub(super) fn download(
     if let Ok(dst) = File::open(path) {
         let meta = dst.metadata()?;
         if meta.len() > 0 {
+            config
+                .global_last_use()?
+                .mark_registry_crate_used(last_use::RegistryCrate {
+                    encoded_registry_name,
+                    crate_filename: pkg.tarball_name(),
+                    size: meta.len(),
+                });
             return Ok(MaybeLock::Ready(dst));
         }
     }
@@ -104,6 +113,7 @@ pub(super) fn download(
 pub(super) fn finish_download(
     cache_path: &Filesystem,
     config: &Config,
+    encoded_registry_name: String,
     pkg: PackageId,
     checksum: &str,
     data: &[u8],
@@ -113,6 +123,13 @@ pub(super) fn finish_download(
     if actual != checksum {
         anyhow::bail!("failed to verify the checksum of `{}`", pkg)
     }
+    config
+        .global_last_use()?
+        .mark_registry_crate_used(last_use::RegistryCrate {
+            encoded_registry_name,
+            crate_filename: pkg.tarball_name(),
+            size: data.len() as u64,
+        });
 
     cache_path.create_dir()?;
     let path = cache_path.join(&pkg.tarball_name());

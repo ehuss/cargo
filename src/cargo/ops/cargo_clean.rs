@@ -350,9 +350,9 @@ impl<'cfg> CleanContext<'cfg> {
     }
 
     pub fn rm_rf(&mut self, path: &Path) -> CargoResult<()> {
-        if fs::symlink_metadata(path).is_err() {
+        let Ok(meta) = fs::symlink_metadata(path) else {
             return Ok(());
-        }
+        };
 
         if self.dry_run {
             // Concise because if in verbose mode, the path will be written in
@@ -366,6 +366,21 @@ impl<'cfg> CleanContext<'cfg> {
                 .verbose(|shell| shell.status("Removing", path.display()))?;
         }
         self.progress.display_now()?;
+
+        let mut rm_file = |path: &Path, meta: Result<std::fs::Metadata, _>| {
+            if let Ok(meta) = meta {
+                self.total_bytes_removed += meta.len();
+            }
+            if !self.dry_run {
+                paths::remove_file(path)?;
+            }
+            Ok(())
+        };
+
+        if !meta.is_dir() {
+            self.num_files_folders_cleaned += 1;
+            return rm_file(path, Ok(meta));
+        }
 
         for entry in walkdir::WalkDir::new(path).contents_first(true) {
             let entry = entry?;
@@ -384,18 +399,11 @@ impl<'cfg> CleanContext<'cfg> {
                 // to `std::fs::remove_dir_all`, which may be more reliable than a simple walk in
                 // platform-specific edge cases.
                 if !self.dry_run {
-                    paths::remove_dir_all(entry.path())
-                        .with_context(|| "could not remove build directory")?;
+                    paths::remove_dir_all(entry.path())?;
                 }
             } else {
                 // TODO: Perf test this.
-                if let Ok(meta) = entry.metadata() {
-                    self.total_bytes_removed += meta.len();
-                }
-                if !self.dry_run {
-                    paths::remove_file(entry.path())
-                        .with_context(|| "failed to remove build artifact")?;
-                }
+                rm_file(entry.path(), entry.metadata())?;
             }
         }
 

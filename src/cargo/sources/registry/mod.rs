@@ -585,15 +585,16 @@ impl<'cfg> RegistrySource<'cfg> {
         let path = dst.join(PACKAGE_SOURCE_LOCK);
         let path = self.config.assert_package_cache_locked(&path);
         let unpack_dir = path.parent().unwrap();
-        self.config
-            .global_last_use()?
-            .mark_registry_src_used(last_use::RegistrySrc {
-                encoded_registry_name: self.name.clone(),
-                package_dir: package_dir.clone(),
-            });
         match fs::read_to_string(path) {
             Ok(ok) => match serde_json::from_str::<LockMetadata>(&ok) {
                 Ok(lock_meta) if lock_meta.v == 1 => {
+                    self.config
+                        .global_last_use()?
+                        .mark_registry_src_used(last_use::RegistrySrc {
+                            encoded_registry_name: self.name.clone(),
+                            package_dir: package_dir.clone(),
+                            size: None,
+                        });
                     return Ok(unpack_dir.to_path_buf());
                 }
                 _ => {
@@ -618,6 +619,7 @@ impl<'cfg> RegistrySource<'cfg> {
             set_mask(&mut tar);
             tar
         };
+        let mut bytes_written = 0;
         let prefix = unpack_dir.file_name().unwrap();
         let parent = unpack_dir.parent().unwrap();
         for entry in tar.entries()? {
@@ -649,6 +651,7 @@ impl<'cfg> RegistrySource<'cfg> {
                 continue;
             }
             // Unpacking failed
+            bytes_written += entry.size();
             let mut result = entry.unpack_in(parent).map_err(anyhow::Error::from);
             if cfg!(windows) && restricted_names::is_windows_reserved_path(&entry_path) {
                 result = result.with_context(|| {
@@ -674,6 +677,14 @@ impl<'cfg> RegistrySource<'cfg> {
 
         let lock_meta = LockMetadata { v: 1 };
         write!(ok, "{}", serde_json::to_string(&lock_meta).unwrap())?;
+
+        self.config
+            .global_last_use()?
+            .mark_registry_src_used(last_use::RegistrySrc {
+                encoded_registry_name: self.name.clone(),
+                package_dir: package_dir.clone(),
+                size: Some(bytes_written),
+            });
 
         Ok(unpack_dir.to_path_buf())
     }

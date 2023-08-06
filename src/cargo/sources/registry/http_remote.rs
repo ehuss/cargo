@@ -760,16 +760,10 @@ impl<'cfg> RegistryData for HttpRegistry<'cfg> {
             }
         };
 
-        self.config
-            .global_last_use()?
-            .mark_registry_crate_used(last_use::RegistryCrate {
-                encoded_registry_name: self.name.clone(),
-                crate_filename: pkg.tarball_name(),
-            });
-
         download::download(
             &self.cache_path,
             &self.config,
+            self.name.clone(),
             pkg,
             checksum,
             registry_config,
@@ -782,7 +776,14 @@ impl<'cfg> RegistryData for HttpRegistry<'cfg> {
         checksum: &str,
         data: &[u8],
     ) -> CargoResult<File> {
-        download::finish_download(&self.cache_path, &self.config, pkg, checksum, data)
+        download::finish_download(
+            &self.cache_path,
+            &self.config,
+            self.name.clone(),
+            pkg,
+            checksum,
+            data,
+        )
     }
 
     fn is_crate_downloaded(&self, pkg: PackageId) -> bool {

@@ -17,7 +17,7 @@ pub fn cli() -> Command {
         .arg_target_triple("Target triple to clean output for")
         .arg_target_dir()
         .arg_manifest_path()
-        .arg(flag("dry-run", "Display what would be deleted without deleting anything").short('n'))
+        .arg(flag("dry-run", "Display what would be deleted without deleting anything (unstable)").short('n'))
 
         // NOTE: Not all of these options may get stabilized. Some of them are
         // very low-level details, and may not be something typical users need.

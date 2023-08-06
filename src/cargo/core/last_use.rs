@@ -5,11 +5,12 @@ use crate::core::gc::GcOpts;
 use crate::ops::{CleanContext, CleaningFolderBar};
 use crate::util::Filesystem;
 use crate::{CargoResult, Config};
-use tracing::{debug, trace};
+use anyhow::Context;
 use rusqlite::{params, Connection};
 use std::collections::{hash_map, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
+use tracing::{debug, trace};
 
 const LAST_USE_FILENAME: &str = ".last-use";
 
@@ -50,12 +51,14 @@ pub struct RegistryIndex {
 pub struct RegistryCrate {
     pub encoded_registry_name: String,
     pub crate_filename: String,
+    pub size: u64,
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct RegistrySrc {
     pub encoded_registry_name: String,
     pub package_dir: String,
+    pub size: Option<u64>,
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
@@ -93,6 +96,7 @@ fn migrations() -> Vec<Migration> {
             "CREATE TABLE registry_crate (
                 registry_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
+                size INTEGER NOT NULL,
                 timestamp INTEGER NOT NULL,
                 PRIMARY KEY (registry_id, name)
              )",
@@ -101,6 +105,7 @@ fn migrations() -> Vec<Migration> {
             "CREATE TABLE registry_src (
                 registry_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
+                size INTEGER,
                 timestamp INTEGER NOT NULL,
                 PRIMARY KEY (registry_id, name)
              )",
@@ -245,15 +250,19 @@ impl GlobalLastUse {
         self.git_checkout_timestamps.insert(git_checkout, timestamp);
     }
 
+    fn registry_id_from_name(&self, encoded_registry_name: &str) -> CargoResult<i64> {
+        let mut stmt = self
+            .connection
+            .prepare_cached("SELECT id FROM registry_index WHERE name = ?")?;
+        let id = stmt.query_row([encoded_registry_name], |row| row.get(0))?;
+        Ok(id)
+    }
+
     fn registry_id(&mut self, encoded_registry_name: &str) -> CargoResult<i64> {
         match self.registry_keys.get(encoded_registry_name) {
             Some(i) => Ok(*i),
             None => {
-                let id = self.connection.query_row(
-                    "SELECT registry_id FROM registry_index WHERE name = ?",
-                    [encoded_registry_name],
-                    |row| row.get(0),
-                )?;
+                let id = self.registry_id_from_name(encoded_registry_name)?;
                 self.registry_keys
                     .insert(encoded_registry_name.to_string(), id);
                 Ok(id)
@@ -276,15 +285,29 @@ impl GlobalLastUse {
         }
     }
 
-    fn insert_registry_index(&mut self) -> CargoResult<()> {
+    fn get_id_map(&self, table_name: &str, ids: &[i64]) -> CargoResult<HashMap<i64, PathBuf>> {
+        let mut stmt = self
+            .connection
+            .prepare_cached(&format!("SELECT name FROM {table_name} WHERE id = ?1"))?;
+        ids.iter()
+            .map(|id| {
+                let name = stmt.query_row(params![id], |row| {
+                    Ok(PathBuf::from(row.get::<_, String>(0)?))
+                })?;
+                Ok((*id, name))
+            })
+            .collect()
+    }
+
+    fn insert_registry_index_from_cache(&mut self) -> CargoResult<()> {
+        let mut stmt = self.connection.prepare_cached(
+            "INSERT INTO registry_index (name, timestamp)
+                VALUES (?1, ?2)
+                ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
+                RETURNING id",
+        )?;
         for (index, timestamp) in self.registry_index_timestamps.drain() {
             trace!("insert registry index {index:?} {timestamp}");
-            let mut stmt = self.connection.prepare_cached(
-                "INSERT INTO registry_index (name, timestamp)
-                 VALUES (?1, ?2)
-                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
-                 RETURNING id",
-            )?;
             let id = stmt.query_row(params![index.encoded_registry_name, timestamp], |row| {
                 row.get(0)
             })?;
@@ -304,15 +327,15 @@ impl GlobalLastUse {
         Ok(())
     }
 
-    fn insert_git_db(&mut self) -> CargoResult<()> {
+    fn insert_git_db_from_cache(&mut self) -> CargoResult<()> {
+        let mut stmt = self.connection.prepare_cached(
+            "INSERT INTO git_db (name, timestamp)
+                VALUES (?1, ?2)
+                ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
+                RETURNING id",
+        )?;
         for (git_db, timestamp) in self.git_db_timestamps.drain() {
             trace!("insert git db used {git_db:?} {timestamp}");
-            let mut stmt = self.connection.prepare_cached(
-                "INSERT INTO git_db (name, timestamp)
-                    VALUES (?1, ?2)
-                    ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
-                    RETURNING id",
-            )?;
             let id = stmt.query_row(params![git_db.encoded_git_name, timestamp], |row| {
                 row.get(0)
             })?;
@@ -327,7 +350,7 @@ impl GlobalLastUse {
         Ok(())
     }
 
-    fn insert_registry_crate(&mut self) -> CargoResult<()> {
+    fn insert_registry_crate_from_cache(&mut self) -> CargoResult<()> {
         let mut registry_crate_timestamps = HashMap::new();
         std::mem::swap(
             &mut self.registry_crate_timestamps,
@@ -337,20 +360,21 @@ impl GlobalLastUse {
             trace!("insert registry crate {registry_crate:?} {timestamp}");
             let registry_id = self.registry_id(&registry_crate.encoded_registry_name)?;
             let mut stmt = self.connection.prepare_cached(
-                "INSERT INTO registry_crate (registry_id, name, timestamp)
-                 VALUES (?1, ?2, ?3)
+                "INSERT INTO registry_crate (registry_id, name, size, timestamp)
+                 VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
             )?;
             stmt.execute(params![
                 registry_id,
                 registry_crate.crate_filename,
+                registry_crate.size,
                 timestamp
             ])?;
         }
         Ok(())
     }
 
-    fn insert_registry_src(&mut self) -> CargoResult<()> {
+    fn insert_registry_src_from_cache(&mut self) -> CargoResult<()> {
         let mut registry_src_timestamps = HashMap::new();
         std::mem::swap(
             &mut self.registry_src_timestamps,
@@ -359,22 +383,27 @@ impl GlobalLastUse {
         for (registry_src, timestamp) in registry_src_timestamps {
             trace!("insert registry src {registry_src:?} {timestamp}");
             let registry_id = self.registry_id(&registry_src.encoded_registry_name)?;
+            let mut stmt = self.connection.prepare_cached(
+                "INSERT INTO registry_src (registry_id, name, size, timestamp)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
+            )?;
             debug!(
                 "inserting registry_src {:?} {:?}",
                 registry_src.package_dir, timestamp
             );
-            let mut stmt = self.connection.prepare_cached(
-                "INSERT INTO registry_src (registry_id, name, timestamp)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
-            )?;
-            stmt.execute(params![registry_id, registry_src.package_dir, timestamp])?;
+            stmt.execute(params![
+                registry_id,
+                registry_src.package_dir,
+                registry_src.size,
+                timestamp
+            ])?;
         }
 
         Ok(())
     }
 
-    fn insert_git_checkout(&mut self) -> CargoResult<()> {
+    fn insert_git_checkout_from_cache(&mut self) -> CargoResult<()> {
         let mut git_checkout_timestamps = HashMap::new();
         std::mem::swap(
             &mut self.git_checkout_timestamps,
@@ -420,11 +449,11 @@ impl GlobalLastUse {
         }
         self.connection.execute("BEGIN TRANSACTION", [])?;
         // These must run before the ones that refer to their IDs.
-        self.insert_registry_index()?;
-        self.insert_git_db()?;
-        self.insert_registry_crate()?;
-        self.insert_registry_src()?;
-        self.insert_git_checkout()?;
+        self.insert_registry_index_from_cache()?;
+        self.insert_git_db_from_cache()?;
+        self.insert_registry_crate_from_cache()?;
+        self.insert_registry_src_from_cache()?;
+        self.insert_git_checkout_from_cache()?;
 
         self.connection.execute("COMMIT", [])?;
         trace!("last-use save complete");
@@ -450,7 +479,7 @@ impl GlobalLastUse {
 
     pub fn registry_crate_all(&self) -> CargoResult<Vec<(RegistryCrate, Timestamp)>> {
         let mut stmt = self.connection.prepare_cached(
-            "SELECT registry_index.name, registry_crate.name, registry_crate.timestamp
+            "SELECT registry_index.name, registry_crate.name, registry_crate.size, registry_crate.timestamp
              FROM registry_index, registry_crate
              WHERE registry_crate.registry_id = registry_index.id",
         )?;
@@ -458,10 +487,12 @@ impl GlobalLastUse {
             .query_map([], |row| {
                 let encoded_registry_name = row.get_unwrap(0);
                 let crate_filename = row.get_unwrap(1);
-                let timestamp = row.get_unwrap(2);
+                let size = row.get_unwrap(2);
+                let timestamp = row.get_unwrap(3);
                 let kind = RegistryCrate {
                     encoded_registry_name,
                     crate_filename,
+                    size,
                 };
                 Ok((kind, timestamp))
             })?
@@ -471,7 +502,7 @@ impl GlobalLastUse {
 
     pub fn registry_src_all(&self) -> CargoResult<Vec<(RegistrySrc, Timestamp)>> {
         let mut stmt = self.connection.prepare_cached(
-            "SELECT registry_index.name, registry_src.name, registry_src.timestamp
+            "SELECT registry_index.name, registry_src.name, registry_src.size, registry_src.timestamp
              FROM registry_index, registry_src
              WHERE registry_src.registry_id = registry_index.id",
         )?;
@@ -479,10 +510,12 @@ impl GlobalLastUse {
             .query_map([], |row| {
                 let encoded_registry_name = row.get_unwrap(0);
                 let package_dir = row.get_unwrap(1);
-                let timestamp = row.get_unwrap(2);
+                let size = row.get_unwrap(2);
+                let timestamp = row.get_unwrap(3);
                 let kind = RegistrySrc {
                     encoded_registry_name,
                     package_dir,
+                    size,
                 };
                 Ok((kind, timestamp))
             })?
@@ -551,6 +584,7 @@ impl GlobalLastUse {
     }
 
     pub fn clean(&self, clean_ctx: &mut CleanContext<'_>, gc_opts: &GcOpts) -> CargoResult<()> {
+        let config = clean_ctx.config;
         let now = now();
         trace!("cleaning {gc_opts:?}");
         self.connection.execute("BEGIN TRANSACTION", [])?;
@@ -558,7 +592,7 @@ impl GlobalLastUse {
             .max_src_age
             .map(|max_age| {
                 let max_age = now - max_age.as_secs();
-                self.get_registry_items_to_clean(max_age, "registry_src")
+                self.get_registry_items_to_clean_age(max_age, "registry_src")
             })
             .transpose()?
             .unwrap_or_default();
@@ -566,7 +600,7 @@ impl GlobalLastUse {
             .max_crate_age
             .map(|max_age| {
                 let max_age = now - max_age.as_secs();
-                self.get_registry_items_to_clean(max_age, "registry_crate")
+                self.get_registry_items_to_clean_age(max_age, "registry_crate")
             })
             .transpose()?
             .unwrap_or_default();
@@ -594,22 +628,45 @@ impl GlobalLastUse {
             })
             .transpose()?
             .unwrap_or_default();
+        // Size collection must happen after date collection so that dates
+        // have precedence, since size constraints are a more blunt
+        // instrument.
+        let mut size_crate_paths = gc_opts
+            .max_crate_size
+            .map(|max_size| {
+                self.get_registry_items_to_clean_size(config, max_size, "registry_crate")
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let mut size_src_paths = gc_opts
+            .max_src_size
+            .map(|max_size| self.get_registry_items_to_clean_size(config, max_size, "registry_src"))
+            .transpose()?
+            .unwrap_or_default();
+        // let (combined_crate, combined_src) = gc_opts
+        //     .max_download_size
+        //     .map(|max_size| self.get_registry_items_to_clean_size_both())
+        //     .transpose()?
+        //     .unwrap_or_default();
+        // size_crate_paths.extend(combined_crate);
+        // size_src_paths.extend(combined_src);
 
-        let config = clean_ctx.config;
         let total = src_paths.len()
             + crate_paths.len()
             + index_paths.len()
             + git_co_paths.len()
-            + git_db_paths.len();
+            + git_db_paths.len()
+            + size_crate_paths.len()
+            + size_src_paths.len();
         let progress = CleaningFolderBar::new(config, total);
         clean_ctx.set_progress(Box::new(progress));
         let base_path = config.registry_source_path().into_path_unlocked();
         // TODO: rm_rf context
-        for path in src_paths {
+        for path in src_paths.iter().chain(size_src_paths.iter()) {
             clean_ctx.rm_rf(&base_path.join(path))?;
         }
         let base_path = config.registry_cache_path().into_path_unlocked();
-        for path in crate_paths {
+        for path in crate_paths.iter().chain(size_crate_paths.iter()) {
             clean_ctx.rm_rf(&base_path.join(path))?;
         }
         let base_path = config.registry_index_path().into_path_unlocked();
@@ -633,7 +690,7 @@ impl GlobalLastUse {
         Ok(())
     }
 
-    fn get_registry_items_to_clean(
+    fn get_registry_items_to_clean_age(
         &self,
         max_age: Timestamp,
         table_name: &str,
@@ -650,20 +707,8 @@ impl GlobalLastUse {
                 Ok((registry_id, name))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        debug!("rows={rows:?}");
-        let ids = rows.iter().map(|row| row.0);
-        let mut registry_name_stmt = self
-            .connection
-            .prepare_cached("SELECT name FROM registry_index WHERE id = ?1")?;
-        let id_map = ids
-            .map(|id| {
-                let name = registry_name_stmt.query_row(params![id], |row| {
-                    Ok(PathBuf::from(row.get::<_, String>(0)?))
-                })?;
-                Ok((id, name))
-            })
-            .collect::<CargoResult<HashMap<i64, PathBuf>>>()?;
-        debug!("id_map={id_map:#?}");
+        let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
+        let id_map = self.get_id_map("registry_index", &ids)?;
         let paths = rows
             .iter()
             .map(|(id, name)| {
@@ -672,6 +717,166 @@ impl GlobalLastUse {
             })
             .collect();
         Ok(paths)
+    }
+
+    fn get_registry_items_to_clean_size(
+        &self,
+        config: &Config,
+        max_size: u64,
+        table_name: &str,
+    ) -> CargoResult<Vec<PathBuf>> {
+        match table_name {
+            "registry_crate" => self.populate_untracked_crate(config)?,
+            "registry_src" => self.populate_untracked_src(config)?,
+            _ => panic!("unexpected table {table_name}"),
+        }
+        debug!("cleaning {table_name} till under {max_size:?}");
+        let total_size: u64 = self.connection.query_row(
+            &format!("SELECT SUM(size) FROM {table_name}"),
+            [],
+            |row| row.get(0),
+        )?;
+        if total_size <= max_size {
+            return Ok(Vec::new());
+        }
+        // TODO: Explain this sql statement.
+        //
+        // The ORDER BY includes `name` mainly for test purposes so that
+        // entries with the same timestamp have deterministic behavior.
+        let mut stmt = self.connection.prepare(&format!(
+            "DELETE FROM {table_name} WHERE rowid IN \
+                (SELECT x.rowid FROM \
+                    (SELECT rowid, size, sum(size) OVER \
+                        (ORDER BY timestamp, name ROWS UNBOUNDED PRECEDING) AS running_amount \
+                        FROM {table_name}) x \
+                    WHERE coalesce(x.running_amount, 0) - x.size < ?1) \
+                RETURNING registry_id, name;"
+        ))?;
+        let rows = stmt
+            .query_map(params![total_size - max_size], |row| {
+                let id = row.get_unwrap(0);
+                let name: String = row.get_unwrap(1);
+                Ok((id, name))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        // Convert registry_id to the encoded registry name, and join thos
+        let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
+        let id_map = self.get_id_map("registry_index", &ids)?;
+        let paths = rows
+            .iter()
+            .map(|(id, name)| {
+                let encoded_name = &id_map[&id];
+                encoded_name.join(name)
+            })
+            .collect();
+        Ok(paths)
+    }
+
+    fn populate_untracked_registry_index_in_path(&self, names: &[String]) -> CargoResult<()> {
+        let mut stmt = self.connection.prepare_cached(
+            "INSERT INTO registry_index (name, timestamp)
+                VALUES (?1, ?2)
+                ON CONFLICT DO NOTHING",
+        )?;
+        let now = now();
+        for name in names {
+            stmt.execute(params![name, now])?;
+        }
+        Ok(())
+    }
+
+    /// Returns a list of directory entries in the given path.
+    fn names_from(path: &Path) -> CargoResult<Vec<String>> {
+        let names = path
+            .read_dir()
+            .with_context(|| format!("failed to read path `{path:?}`"))?
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .collect();
+        Ok(names)
+    }
+
+    fn populate_untracked_crate(&self, config: &Config) -> CargoResult<()> {
+        let base_path = config.registry_cache_path().into_path_unlocked();
+        let index_names = Self::names_from(&base_path)?;
+        self.populate_untracked_registry_index_in_path(&index_names)?;
+
+        let mut insert_stmt = self.connection.prepare_cached(
+            "INSERT INTO registry_crate (registry_id, name, size, timestamp)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT DO NOTHING",
+        )?;
+        let now = now();
+        for index_name in index_names {
+            let id = self.registry_id_from_name(&index_name)?;
+            let index_path = base_path.join(index_name);
+            for crate_name in Self::names_from(&index_path)? {
+                if crate_name.ends_with(".crate") {
+                    // TODO: context;
+                    let size = index_path.join(&crate_name).metadata()?.len();
+                    insert_stmt.execute(params![id, crate_name, size, now])?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn populate_untracked_src(&self, config: &Config) -> CargoResult<()> {
+        let base_path = config.registry_source_path().into_path_unlocked();
+        let index_names = Self::names_from(&base_path)?;
+        self.populate_untracked_registry_index_in_path(&index_names)?;
+
+        let mut select_stmt = self.connection.prepare_cached(
+            "SELECT 1 FROM registry_src
+             WHERE registry_id=?1 AND name=?2",
+        )?;
+        let mut insert_stmt = self.connection.prepare_cached(
+            "INSERT INTO registry_src (registry_id, name, size, timestamp)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT DO NOTHING",
+        )?;
+        let now = now();
+        for index_name in index_names {
+            let id = self.registry_id_from_name(&index_name)?;
+            let index_path = base_path.join(index_name);
+            for src_name in Self::names_from(&index_path)? {
+                if select_stmt.exists(params![id, src_name])? {
+                    continue;
+                }
+                let src_path = index_path.join(&src_name);
+                let meta = src_path.metadata()?; // TODO context
+                if !meta.is_dir() {
+                    continue;
+                }
+                let size = cargo_util::paths::du(&src_path)?;
+                insert_stmt.execute(params![id, src_name, size, now])?;
+            }
+        }
+
+        // Update NULL size entries.
+        let mut null_stmt = self.connection.prepare_cached(
+            "SELECT registry_src.rowid, registry_src.name, registry_index.name
+             FROM registry_src, registry_index
+             WHERE registry_src.size IS NULL AND registry_src.registry_id = registry_index.id",
+        )?;
+        let mut update_stmt = self
+            .connection
+            .prepare_cached("UPDATE registry_src SET size=?1 WHERE rowid=?2")?;
+        let rows = null_stmt.query_map([], |row| {
+            Ok((row.get_unwrap(0), row.get_unwrap(1), row.get_unwrap(2)))
+        })?;
+        for row in rows {
+            let (rowid, src_name, index_name): (i64, String, String) = row?;
+            let path = base_path.join(index_name).join(src_name);
+            if !path.exists() {
+                // TODO: Should this delete the entry?
+                tracing::info!("`{path:?}` is missing");
+                continue;
+            }
+            let size = cargo_util::paths::du(&path)?;
+            update_stmt.execute(params![size, rowid])?;
+        }
+
+        Ok(())
     }
 
     fn get_registry_index_to_clean(&self, max_age: Timestamp) -> CargoResult<Vec<PathBuf>> {
@@ -701,20 +906,8 @@ impl GlobalLastUse {
                 Ok((git_id, name))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        debug!("rows={rows:?}");
-        let ids = rows.iter().map(|row| row.0);
-        let mut git_name_stmt = self
-            .connection
-            .prepare_cached("SELECT name FROM git_db WHERE id = ?1")?;
-        let id_map = ids
-            .map(|id| {
-                let name = git_name_stmt.query_row(params![id], |row| {
-                    Ok(PathBuf::from(row.get::<_, String>(0)?))
-                })?;
-                Ok((id, name))
-            })
-            .collect::<CargoResult<HashMap<i64, PathBuf>>>()?;
-        debug!("id_map={id_map:#?}");
+        let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
+        let id_map = self.get_id_map("git_db", &ids)?;
         let paths = rows
             .iter()
             .map(|(id, name)| {

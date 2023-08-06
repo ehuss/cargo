@@ -4,9 +4,11 @@ use super::config::ConfigBuilder;
 use cargo::core::last_use::{self, GlobalLastUse};
 use cargo_test_support::paths::{self, CargoPathExt};
 use cargo_test_support::registry::{Package, RegistryBuilder};
-use cargo_test_support::{basic_manifest, git, project};
+use cargo_test_support::{basic_manifest, cargo_process, git, project};
+use std::fmt::Write;
 use std::time::{Duration, SystemTime};
 
+/// Helper to get the names of files in a directory as strings.
 fn get_names(glob: &str) -> Vec<String> {
     let mut names: Vec<_> = glob::glob(paths::home().join(glob).to_str().unwrap())
         .unwrap()
@@ -32,17 +34,21 @@ fn get_git_checkout_names(db_name: &str) -> Vec<String> {
     get_names(&format!(".cargo/git/checkouts/{db_name}/*"))
 }
 
-fn days_ago(n: u64) -> String {
-    let st = SystemTime::now() - Duration::from_secs(60 * 60 * 24 * n);
+fn days_ago(n: u64) -> SystemTime {
+    SystemTime::now() - Duration::from_secs(60 * 60 * 24 * n)
+}
+
+fn days_ago_unix(n: u64) -> String {
     // TODO: Export functions for working with timestamps.
-    st.duration_since(SystemTime::UNIX_EPOCH)
+    days_ago(n)
+        .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_secs()
         .to_string()
 }
 
-fn months_ago(n: u64) -> String {
-    days_ago(n * 30)
+fn months_ago_unix(n: u64) -> String {
+    days_ago_unix(n * 30)
 }
 
 #[cargo_test]
@@ -64,7 +70,7 @@ fn gated() {
         .file("src/lib.rs", "")
         .build();
     p.cargo("check")
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(4))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
     let config = ConfigBuilder::new().build();
     assert!(!GlobalLastUse::db_path(&config)
@@ -91,10 +97,12 @@ fn implies_source() {
     last_use.mark_registry_crate_used(last_use::RegistryCrate {
         encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
         crate_filename: "regex-1.8.4.crate".to_string(),
+        size: 123,
     });
     last_use.mark_registry_src_used(last_use::RegistrySrc {
         encoded_registry_name: "index.crates.io-6f17d22bba15001f".to_string(),
         package_dir: "rand-0.8.5".to_string(),
+        size: None,
     });
     last_use.mark_git_checkout_used(last_use::GitCheckout {
         encoded_git_name: "cargo-e7ff1db891893a9e".to_string(),
@@ -142,7 +150,7 @@ fn auto_gc_defaults() {
     // Populate the last-use data.
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(4))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
     assert_eq!(get_registry_names("src"), ["new-1.0.0", "old-1.0.0"]);
     assert_eq!(
@@ -165,7 +173,7 @@ fn auto_gc_defaults() {
     );
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(2))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(2))
         .run();
     assert_eq!(get_registry_names("src"), ["new-1.0.0"]);
     assert_eq!(
@@ -216,7 +224,7 @@ fn auto_gc_config() {
     // Populate the last-use data.
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", days_ago(4))
+        .env("__CARGO_TEST_LAST_USE_NOW", days_ago_unix(4))
         .run();
     assert_eq!(get_registry_names("src"), ["new-1.0.0", "old-1.0.0"]);
     assert_eq!(
@@ -239,7 +247,7 @@ fn auto_gc_config() {
     );
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", days_ago(2))
+        .env("__CARGO_TEST_LAST_USE_NOW", days_ago_unix(2))
         .run();
     assert_eq!(get_registry_names("src"), ["new-1.0.0"]);
     assert_eq!(
@@ -283,7 +291,7 @@ fn frequency() {
     // Populate data in the past.
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(4))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
     assert_eq!(get_index_names().len(), 1);
     assert_eq!(get_registry_names("src"), ["bar-1.0.0"]);
@@ -291,7 +299,7 @@ fn frequency() {
 
     p.change_file("Cargo.toml", &basic_manifest("foo", "0.2.0"));
 
-    // Try after the default expiration time.
+    // Try after the default expiration time, with "never" it shouldn't gc.
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .run();
@@ -302,11 +310,6 @@ fn frequency() {
     // Try again with a setting that allows it to run.
     p.cargo("check -Zgc")
         .env("CARGO_GC_AUTO_FREQUENCY", "1 day")
-        .env(
-            "CARGO_LOG",
-            "cargo::core::last_use=trace,cargo::core::gc=trace",
-        )
-        .stream()
         .masquerade_as_nightly_cargo(&["gc"])
         .run();
     assert_eq!(get_index_names().len(), 0);
@@ -334,7 +337,7 @@ fn auto_gc_index() {
         .build();
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(4))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
     assert_eq!(get_index_names().len(), 1);
 
@@ -349,7 +352,7 @@ fn auto_gc_index() {
     );
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(2))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(2))
         .run();
     assert_eq!(get_index_names().len(), 1);
 
@@ -392,7 +395,7 @@ fn auto_gc_git() {
         .build();
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(6))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(6))
         .run();
     let db_names = get_git_db_names();
     assert_eq!(db_names.len(), 1);
@@ -408,7 +411,7 @@ fn auto_gc_git() {
     git::commit(&git_repo);
     p.cargo("update -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(6))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(6))
         .run();
     assert_eq!(get_git_db_names().len(), 1);
     let second_short_oid = short_id(&git_repo);
@@ -419,7 +422,7 @@ fn auto_gc_git() {
     // In the future, using the second checkout should delete the first.
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(4))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
     assert_eq!(get_git_db_names().len(), 1);
     assert_eq!(
@@ -465,7 +468,7 @@ fn auto_gc_various_commands() {
         p.cargo(cmd)
             .arg("-Zgc")
             .masquerade_as_nightly_cargo(&["gc"])
-            .env("__CARGO_TEST_LAST_USE_NOW", months_ago(4))
+            .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
             .run();
         let config = ConfigBuilder::new().unstable_flag("gc").build();
         let lock = config.acquire_package_cache_lock().unwrap();
@@ -514,6 +517,7 @@ fn updates_last_use_various_commands() {
     // - fetch --locked
     Package::new("bar", "1.0.0").publish();
     let cmds = [
+        // name, expected_crates (0=doesn't download)
         ("check", 1),
         ("fetch", 1),
         ("tree", 1),
@@ -586,7 +590,7 @@ fn both_git_and_http_index_cleans() {
     p.cargo("update")
         .arg("-Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(4))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
     let config = ConfigBuilder::new().unstable_flag("gc").build();
     let lock = config.acquire_package_cache_lock().unwrap();
@@ -631,7 +635,7 @@ fn clean_gc_dry_run() {
     p.cargo("fetch")
         .arg("-Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .env("__CARGO_TEST_LAST_USE_NOW", months_ago(4))
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
 
     let expected_files = "\
@@ -659,3 +663,178 @@ fn clean_gc_dry_run() {
 fn clean_default_gc() {
     // `clean` without options should also gc
 }
+
+#[cargo_test]
+fn tracks_sizes() {
+    // Checks that sizes are properly tracked in the db.
+    Package::new("dep1", "1.0.0")
+        .file("src/lib.rs", "")
+        .publish();
+    Package::new("dep2", "1.0.0")
+        .file("src/lib.rs", "")
+        .file("data", &"abcdefghijklmnopqrstuvwxyz".repeat(1000))
+        .publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                dep1 = "1.0"
+                dep2 = "1.0"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+    p.cargo("fetch")
+        .arg("-Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .run();
+
+    // Check that the crate sizes are the same as on disk.
+    let config = ConfigBuilder::new().unstable_flag("gc").build();
+    let _lock = config.acquire_package_cache_lock().unwrap();
+    let last_use = GlobalLastUse::new(&config).unwrap();
+    let mut crates = last_use.registry_crate_all().unwrap();
+    crates.sort_by(|a, b| a.0.crate_filename.cmp(&b.0.crate_filename));
+    let db_sizes: Vec<_> = crates.iter().map(|c| c.0.size).collect();
+
+    let mut actual: Vec<_> = p
+        .glob(paths::home().join(".cargo/registry/cache/*/*"))
+        .map(|p| p.unwrap())
+        .collect();
+    actual.sort();
+    let actual_sizes: Vec<_> = actual
+        .iter()
+        .map(|path| std::fs::metadata(path).unwrap().len())
+        .collect();
+    assert_eq!(db_sizes, actual_sizes);
+
+    // Also check the src sizes are computed.
+    let mut srcs = last_use.registry_src_all().unwrap();
+    srcs.sort_by(|a, b| a.0.package_dir.cmp(&b.0.package_dir));
+    let db_sizes: Vec<_> = srcs.iter().map(|c| c.0.size.unwrap()).collect();
+    let mut actual: Vec<_> = p
+        .glob(paths::home().join(".cargo/registry/src/*/*"))
+        .map(|p| p.unwrap())
+        .collect();
+    actual.sort();
+    // .cargo-ok is not tracked in the size.
+    actual.iter().for_each(|p| p.join(".cargo-ok").rm_rf());
+    let actual_sizes: Vec<_> = actual
+        .iter()
+        .map(|path| cargo_util::paths::du(path).unwrap())
+        .collect();
+    assert_eq!(db_sizes, actual_sizes);
+    assert!(db_sizes[1] > 26000);
+}
+
+#[cargo_test]
+fn max_crate_size() {
+    // Checks --max-crate-size with various cleaning thresholds.
+    let config = ConfigBuilder::new().unstable_flag("gc").build();
+    let cache = paths::home().join(".cargo/registry/cache/github.com-1ecc6299db9ec823");
+
+    let test_crates = [
+        // name, age, size
+        ("a-1.0.0.crate", 5, 1),
+        ("b-1.0.0.crate", 6, 2),
+        ("c-1.0.0.crate", 3, 3),
+        ("d-1.0.0.crate", 2, 4),
+        ("e-1.0.0.crate", 2, 5),
+        ("f-1.0.0.crate", 9, 6),
+        ("g-1.0.0.crate", 1, 1),
+    ];
+
+    // Populates last-use database and the `.crate` files from `test_crates`.
+    let populate_cache = || {
+        GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
+
+        let _lock = config.acquire_package_cache_lock().unwrap();
+        let mut last_use = GlobalLastUse::new(&config).unwrap();
+
+        cache.rm_rf();
+        cache.mkdir_p();
+        let mut create = |name: &str, age, size: u64| {
+            last_use.mark_registry_crate_used_stamp(
+                last_use::RegistryCrate {
+                    encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
+                    crate_filename: name.to_string(),
+                    size,
+                },
+                Some(&days_ago(age)),
+            );
+            std::fs::write(cache.join(name), "x".repeat(size as usize)).unwrap()
+        };
+
+        for (name, age, size) in test_crates {
+            create(name, age, size);
+        }
+        last_use.save().unwrap();
+    };
+
+    // Determine the order things get deleted so they can be verified.
+    let mut names_by_timestamp: Vec<_> = test_crates
+        .iter()
+        .map(|(name, age, _)| (days_ago_unix(*age), name))
+        .collect();
+    names_by_timestamp.sort();
+    let names_by_timestamp: Vec<_> = names_by_timestamp
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+
+    // This exercises the different boundary conditions.
+    for (clean_size, files, bytes) in [
+        (22, 0, 0),
+        (21, 1, 6),
+        (16, 1, 6),
+        (15, 2, 8),
+        (14, 2, 8),
+        (13, 3, 9),
+        (12, 4, 12),
+        (10, 4, 12),
+        (9, 5, 16),
+        (6, 5, 16),
+        (5, 6, 21),
+        (1, 6, 21),
+        (0, 7, 22),
+    ] {
+        populate_cache();
+        let (removed, kept) = names_by_timestamp.split_at(files);
+        let mut stderr = String::new();
+        for name in removed {
+            writeln!(stderr, "[REMOVING] [..]{name}").unwrap();
+        }
+        write!(
+            stderr,
+            "[REMOVED] {files} files/directories, {bytes} total bytes"
+        )
+        .unwrap();
+        cargo_process(&format!("clean -Zgc -v --max-crate-size={clean_size}"))
+            .masquerade_as_nightly_cargo(&["gc"])
+            .with_stderr_unordered(&stderr)
+            .run();
+        for name in kept {
+            assert!(cache.join(name).exists());
+        }
+        for name in removed {
+            assert!(!cache.join(name).exists());
+        }
+    }
+}
+
+#[cargo_test]
+fn max_src_size() {}
+
+#[cargo_test]
+fn max_size_untracked_crate() {}
+
+#[cargo_test]
+fn max_size_untracked_src() {}
+
+#[cargo_test]
+fn max_download_size() {}
