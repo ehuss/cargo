@@ -604,10 +604,12 @@ fn global_last_use_update(c: &mut Criterion) {
                     last_use.mark_registry_crate_used(last_use::RegistryCrate {
                         encoded_registry_name: crates_io.clone(),
                         crate_filename: format!("{}.crate", name),
+                        size: 12345678,
                     });
                     last_use.mark_registry_src_used(last_use::RegistrySrc {
                         encoded_registry_name: crates_io.clone(),
                         package_dir: name.to_string(),
+                        size: Some(12345678),
                     });
                 }
                 last_use.save().unwrap();

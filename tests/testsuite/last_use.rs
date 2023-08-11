@@ -2,10 +2,12 @@
 
 use super::config::ConfigBuilder;
 use cargo::core::last_use::{self, GlobalLastUse};
+use cargo::Config;
 use cargo_test_support::paths::{self, CargoPathExt};
 use cargo_test_support::registry::{Package, RegistryBuilder};
-use cargo_test_support::{basic_manifest, cargo_process, git, project};
+use cargo_test_support::{basic_manifest, cargo_process, git, project, Project};
 use std::fmt::Write;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 /// Helper to get the names of files in a directory as strings.
@@ -49,6 +51,56 @@ fn days_ago_unix(n: u64) -> String {
 
 fn months_ago_unix(n: u64) -> String {
     days_ago_unix(n * 30)
+}
+
+/// Populates last-use database and the cache files.
+fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (PathBuf, PathBuf) {
+    let cache_dir = paths::home().join(".cargo/registry/cache/github.com-1ecc6299db9ec823");
+    let src_dir = paths::home().join(".cargo/registry/src/github.com-1ecc6299db9ec823");
+
+    GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
+
+    let _lock = config.acquire_package_cache_lock().unwrap();
+    let mut last_use = GlobalLastUse::new(&config).unwrap();
+
+    cache_dir.rm_rf();
+    cache_dir.mkdir_p();
+    src_dir.rm_rf();
+    src_dir.mkdir_p();
+    let mut create = |name: &str, age, crate_size: u64, src_size: u64| {
+        let crate_filename = format!("{name}.crate");
+        last_use.mark_registry_crate_used_stamp(
+            last_use::RegistryCrate {
+                encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
+                crate_filename: crate_filename.clone(),
+                size: crate_size,
+            },
+            Some(&days_ago(age)),
+        );
+        last_use.mark_registry_src_used_stamp(
+            last_use::RegistrySrc {
+                encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
+                package_dir: name.to_string(),
+                size: Some(src_size),
+            },
+            Some(&days_ago(age)),
+        );
+        std::fs::write(
+            cache_dir.join(crate_filename),
+            "x".repeat(crate_size as usize),
+        )
+        .unwrap();
+        let path = src_dir.join(name);
+        path.mkdir_p();
+        std::fs::write(path.join("data"), "x".repeat(src_size as usize)).unwrap()
+    };
+
+    for (name, age, crate_size, src_size) in test_crates {
+        create(name, *age, *crate_size, *src_size);
+    }
+    last_use.save().unwrap();
+
+    (cache_dir, src_dir)
 }
 
 #[cargo_test]
@@ -587,8 +639,7 @@ fn both_git_and_http_index_cleans() {
         .file("src/lib.rs", "")
         .build();
 
-    p.cargo("update")
-        .arg("-Zgc")
+    p.cargo("update -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
@@ -602,8 +653,7 @@ fn both_git_and_http_index_cleans() {
 
     // Running in the future without these indexes should delete them.
     p.change_file("Cargo.toml", &basic_manifest("foo", "0.2.0"));
-    p.cargo("clean --gc")
-        .arg("-Zgc")
+    p.cargo("clean --gc -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .run();
     let lock = config.acquire_package_cache_lock().unwrap();
@@ -632,8 +682,7 @@ fn clean_gc_dry_run() {
         .file("src/lib.rs", "")
         .build();
     // Populate the last-use data.
-    p.cargo("fetch")
-        .arg("-Zgc")
+    p.cargo("fetch -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
@@ -643,16 +692,14 @@ fn clean_gc_dry_run() {
         [..]/.cargo/registry/cache/[..]/bar-1.0.0.crate\n\
         [..]/.cargo/registry/index/[..]\n\
     ";
-    p.cargo("clean --gc --dry-run")
-        .arg("-Zgc")
+    p.cargo("clean --gc --dry-run -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .with_stdout_unordered(expected_files)
         .with_stderr("[SUMMARY] [..] files/directories, [..] total bytes")
         .run();
 
     // Again, make sure the information is still tracked.
-    p.cargo("clean --gc --dry-run")
-        .arg("-Zgc")
+    p.cargo("clean --gc --dry-run -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .with_stdout_unordered(expected_files)
         .with_stderr("[SUMMARY] [..] files/directories, [..] total bytes")
@@ -662,6 +709,37 @@ fn clean_gc_dry_run() {
 #[cargo_test]
 fn clean_default_gc() {
     // `clean` without options should also gc
+    Package::new("bar", "1.0.0").publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                bar = "1.0"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+    // Populate the last-use data.
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
+        .run();
+    p.cargo("clean -v -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr_unordered(
+            "\
+[REMOVING] [ROOT]/home/.cargo/registry/src/[..]/bar-1.0.0
+[REMOVING] [ROOT]/home/.cargo/registry/cache/[..]/bar-1.0.0.crate
+[REMOVING] [ROOT]/home/.cargo/registry/index/[..]
+[REMOVED] [..] files/directories, [..] total bytes
+",
+        )
+        .run();
 }
 
 #[cargo_test]
@@ -689,8 +767,7 @@ fn tracks_sizes() {
         )
         .file("src/lib.rs", "")
         .build();
-    p.cargo("fetch")
-        .arg("-Zgc")
+    p.cargo("fetch -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .run();
 
@@ -733,53 +810,25 @@ fn tracks_sizes() {
 }
 
 #[cargo_test]
-fn max_crate_size() {
-    // Checks --max-crate-size with various cleaning thresholds.
+fn max_size() {
+    // Checks --max-crate-size and --max-src-size with various cleaning thresholds.
     let config = ConfigBuilder::new().unstable_flag("gc").build();
-    let cache = paths::home().join(".cargo/registry/cache/github.com-1ecc6299db9ec823");
 
     let test_crates = [
-        // name, age, size
-        ("a-1.0.0.crate", 5, 1),
-        ("b-1.0.0.crate", 6, 2),
-        ("c-1.0.0.crate", 3, 3),
-        ("d-1.0.0.crate", 2, 4),
-        ("e-1.0.0.crate", 2, 5),
-        ("f-1.0.0.crate", 9, 6),
-        ("g-1.0.0.crate", 1, 1),
+        // name, age, crate_size, src_size
+        ("a-1.0.0", 5, 1, 1),
+        ("b-1.0.0", 6, 2, 2),
+        ("c-1.0.0", 3, 3, 3),
+        ("d-1.0.0", 2, 4, 4),
+        ("e-1.0.0", 2, 5, 5),
+        ("f-1.0.0", 9, 6, 6),
+        ("g-1.0.0", 1, 1, 1),
     ];
-
-    // Populates last-use database and the `.crate` files from `test_crates`.
-    let populate_cache = || {
-        GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
-
-        let _lock = config.acquire_package_cache_lock().unwrap();
-        let mut last_use = GlobalLastUse::new(&config).unwrap();
-
-        cache.rm_rf();
-        cache.mkdir_p();
-        let mut create = |name: &str, age, size: u64| {
-            last_use.mark_registry_crate_used_stamp(
-                last_use::RegistryCrate {
-                    encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
-                    crate_filename: name.to_string(),
-                    size,
-                },
-                Some(&days_ago(age)),
-            );
-            std::fs::write(cache.join(name), "x".repeat(size as usize)).unwrap()
-        };
-
-        for (name, age, size) in test_crates {
-            create(name, age, size);
-        }
-        last_use.save().unwrap();
-    };
 
     // Determine the order things get deleted so they can be verified.
     let mut names_by_timestamp: Vec<_> = test_crates
         .iter()
-        .map(|(name, age, _)| (days_ago_unix(*age), name))
+        .map(|(name, age, _, _)| (days_ago_unix(*age), name))
         .collect();
     names_by_timestamp.sort();
     let names_by_timestamp: Vec<_> = names_by_timestamp
@@ -803,11 +852,12 @@ fn max_crate_size() {
         (1, 6, 21),
         (0, 7, 22),
     ] {
-        populate_cache();
         let (removed, kept) = names_by_timestamp.split_at(files);
+        // --max-crate-size
+        let (cache_dir, src_dir) = populate_cache(&config, &test_crates);
         let mut stderr = String::new();
         for name in removed {
-            writeln!(stderr, "[REMOVING] [..]{name}").unwrap();
+            writeln!(stderr, "[REMOVING] [..]{name}.crate").unwrap();
         }
         write!(
             stderr,
@@ -819,22 +869,200 @@ fn max_crate_size() {
             .with_stderr_unordered(&stderr)
             .run();
         for name in kept {
-            assert!(cache.join(name).exists());
+            assert!(cache_dir.join(format!("{name}.crate")).exists());
         }
         for name in removed {
-            assert!(!cache.join(name).exists());
+            assert!(!cache_dir.join(format!("{name}.crate")).exists());
+        }
+
+        // --max-src-size
+        populate_cache(&config, &test_crates);
+        let mut stderr = String::new();
+        for name in removed {
+            writeln!(stderr, "[REMOVING] [..]{name}").unwrap();
+        }
+        let total = files * 2; // dir + file
+        write!(
+            stderr,
+            "[REMOVED] {total} files/directories, {bytes} total bytes"
+        )
+        .unwrap();
+        cargo_process(&format!("clean -Zgc -v --max-src-size={clean_size}"))
+            .masquerade_as_nightly_cargo(&["gc"])
+            .with_stderr_unordered(&stderr)
+            .run();
+        for name in kept {
+            assert!(src_dir.join(name).exists());
+        }
+        for name in removed {
+            assert!(!src_dir.join(name).exists());
         }
     }
 }
 
 #[cargo_test]
-fn max_src_size() {}
+fn max_size_untracked_crate() {
+    // When a .crate file exists from an older version of cargo that did not
+    // track sizes, `clean --max-crate-size` should populate the db with the
+    // sizes.
+    let config = ConfigBuilder::new().unstable_flag("gc").build();
+    let cache = paths::home().join(".cargo/registry/cache/github.com-1ecc6299db9ec823");
+    cache.mkdir_p();
+    // Create the `.crate files.
+    let test_crates = [
+        // name, size
+        ("a-1.0.0.crate", 1234),
+        ("b-1.0.0.crate", 42),
+        ("c-1.0.0.crate", 0),
+    ];
+    for (name, size) in test_crates {
+        std::fs::write(cache.join(name), "x".repeat(size as usize)).unwrap()
+    }
+    // This should scan the directory and populate the db with the size information.
+    cargo_process("clean -Zgc -v --max-crate-size=100000")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr("[REMOVED] 0 files/directories, 0 total bytes")
+        .run();
+    // Check that it stored the size data.
+    let _lock = config.acquire_package_cache_lock().unwrap();
+    let last_use = GlobalLastUse::new(&config).unwrap();
+    let crates = last_use.registry_crate_all().unwrap();
+    let mut actual: Vec<_> = crates
+        .iter()
+        .map(|(rc, _time)| (rc.crate_filename.as_str(), rc.size))
+        .collect();
+    actual.sort();
+    assert_eq!(test_crates, actual.as_slice());
+}
+
+/// Helper to prepare the max-size test.
+fn max_size_untracked_prepare() -> (Config, Project) {
+    // First, publish and download a dependency.
+    Package::new("bar", "1.0.0").publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                bar = "1.0"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+    p.cargo("fetch").run();
+    // Pretend it was an older version that did not track last-use.
+    let config = ConfigBuilder::new().unstable_flag("gc").build();
+    GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
+    (config, p)
+}
+
+/// Helper to verify the max-size test.
+fn max_size_untracked_verify(config: &Config) {
+    let actual: Vec<_> = glob::glob(
+        paths::home()
+            .join(".cargo/registry/src/*/*")
+            .to_str()
+            .unwrap(),
+    )
+    .unwrap()
+    .map(|p| p.unwrap())
+    .collect();
+    assert_eq!(actual.len(), 1);
+    let actual_size = cargo_util::paths::du(&actual[0]).unwrap();
+    let lock = config.acquire_package_cache_lock().unwrap();
+    let last_use = GlobalLastUse::new(&config).unwrap();
+    let srcs = last_use.registry_src_all().unwrap();
+    assert_eq!(srcs.len(), 1);
+    assert_eq!(srcs[0].0.size, Some(actual_size));
+    drop(lock);
+}
 
 #[cargo_test]
-fn max_size_untracked_crate() {}
+fn max_size_untracked_src_from_use() {
+    // When a src directory exists from an older version of cargo that did not
+    // track sizes, doing a build should populate the db with an entry with an
+    // unknown size. `clean --max-src-size` should then fix the size.
+    let (config, p) = max_size_untracked_prepare();
+
+    // Run a command that will update the db with an unknown src size.
+    p.cargo("tree -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .run();
+    // Check that it is None.
+    let lock = config.acquire_package_cache_lock().unwrap();
+    let last_use = GlobalLastUse::new(&config).unwrap();
+    let srcs = last_use.registry_src_all().unwrap();
+    assert_eq!(srcs.len(), 1);
+    assert_eq!(srcs[0].0.size, None);
+    drop(lock);
+
+    // Fix the size.
+    p.cargo("clean -v --max-src-size=10000 -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr("[REMOVED] 0 files/directories, 0 total bytes")
+        .run();
+    max_size_untracked_verify(&config);
+}
 
 #[cargo_test]
-fn max_size_untracked_src() {}
+fn max_size_untracked_src_from_clean() {
+    // When a src directory exists from an older version of cargo that did not
+    // track sizes, `clean --max-src-size` should populate the db with the
+    // sizes.
+    let (config, p) = max_size_untracked_prepare();
+
+    // Clean should scan the src and update the db.
+    p.cargo("clean -v --max-src-size=10000 -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr("[REMOVED] 0 files/directories, 0 total bytes")
+        .run();
+    max_size_untracked_verify(&config);
+}
 
 #[cargo_test]
-fn max_download_size() {}
+fn max_download_size() {
+    // --max-download-size
+    let config = ConfigBuilder::new().unstable_flag("gc").build();
+
+    let test_crates = [
+        // name, age, crate_size, src_size
+        ("d-1.0.0", 4, 4, 5),
+        ("c-1.0.0", 3, 3, 3),
+        ("a-1.0.0", 1, 2, 5),
+        ("b-1.0.0", 1, 1, 7),
+    ];
+
+    for (max_size, num_deleted, files_deleted, bytes) in [
+        (30, 0, 0, 0),
+        (29, 1, 2, 5),
+        (24, 2, 3, 9),
+        (20, 3, 5, 12),
+        (1, 7, 11, 29),
+        (0, 8, 12, 30),
+    ] {
+        populate_cache(&config, &test_crates);
+        // Determine the order things will be deleted.
+        let delete_order: Vec<String> = test_crates
+            .iter()
+            .flat_map(|(name, _, _, _)| [name.to_string(), format!("{name}.crate")])
+            .collect();
+        let (removed, _kept) = delete_order.split_at(num_deleted);
+        let mut stderr = String::new();
+        for name in removed {
+            writeln!(stderr, "[REMOVING] [..]{name}").unwrap();
+        }
+        write!(
+            stderr,
+            "[REMOVED] {files_deleted} files/directories, {bytes} total bytes",
+        )
+        .unwrap();
+        cargo_process(&format!("clean -Zgc -v --max-download-size={max_size}"))
+            .masquerade_as_nightly_cargo(&["gc"])
+            .with_stderr_unordered(&stderr)
+            .run();
+    }
+}

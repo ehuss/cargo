@@ -50,6 +50,7 @@ fn main() {
                 last_use::RegistryCrate {
                     encoded_registry_name: encoded_registry_name.clone(),
                     crate_filename: krate.file_name().to_string_lossy().into_owned(),
+                    size: meta.len(),
                 },
                 Some(&meta.modified().unwrap()),
             );
@@ -67,6 +68,7 @@ fn main() {
                 last_use::RegistrySrc {
                     encoded_registry_name: encoded_registry_name.clone(),
                     package_dir: krate.file_name().to_string_lossy().into_owned(),
+                    size: Some(cargo_util::paths::du(&krate.path()).unwrap()),
                 },
                 Some(&meta.modified().unwrap()),
             );

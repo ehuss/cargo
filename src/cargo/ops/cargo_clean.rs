@@ -8,7 +8,6 @@ use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
 use crate::util::{Config, Progress, ProgressStyle};
 
-use anyhow::Context as _;
 use cargo_util::paths;
 use std::fs;
 use std::path::Path;

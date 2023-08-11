@@ -643,13 +643,13 @@ impl GlobalLastUse {
             .map(|max_size| self.get_registry_items_to_clean_size(config, max_size, "registry_src"))
             .transpose()?
             .unwrap_or_default();
-        // let (combined_crate, combined_src) = gc_opts
-        //     .max_download_size
-        //     .map(|max_size| self.get_registry_items_to_clean_size_both())
-        //     .transpose()?
-        //     .unwrap_or_default();
-        // size_crate_paths.extend(combined_crate);
-        // size_src_paths.extend(combined_src);
+        let (combined_src, combined_crate) = gc_opts
+            .max_download_size
+            .map(|max_size| self.get_registry_items_to_clean_size_both(config, max_size))
+            .transpose()?
+            .unwrap_or_default();
+        size_crate_paths.extend(combined_crate);
+        size_src_paths.extend(combined_src);
 
         let total = src_paths.len()
             + crate_paths.len()
@@ -759,7 +759,7 @@ impl GlobalLastUse {
                 Ok((id, name))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        // Convert registry_id to the encoded registry name, and join thos
+        // Convert registry_id to the encoded registry name, and join those.
         let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
         let id_map = self.get_id_map("registry_index", &ids)?;
         let paths = rows
@@ -770,6 +770,66 @@ impl GlobalLastUse {
             })
             .collect();
         Ok(paths)
+    }
+
+    fn get_registry_items_to_clean_size_both(
+        &self,
+        config: &Config,
+        max_size: u64,
+    ) -> CargoResult<(Vec<PathBuf>, Vec<PathBuf>)> {
+        self.populate_untracked_crate(config)?;
+        self.populate_untracked_src(config)?;
+        debug!("cleaning download till under {max_size:?}");
+
+        let mut stmt = self.connection.prepare_cached(
+            "SELECT 1, registry_src.rowid, registry_src.name AS name, registry_index.name,
+                    registry_src.size, registry_src.timestamp AS timestamp
+             FROM registry_src, registry_index
+             WHERE registry_src.registry_id = registry_index.id AND registry_src.size NOT NULL
+
+             UNION
+
+             SELECT 2, registry_crate.rowid, registry_crate.name AS name, registry_index.name,
+                    registry_crate.size, registry_crate.timestamp AS timestamp
+             FROM registry_crate, registry_index
+             WHERE registry_crate.registry_id = registry_index.id
+
+             ORDER BY timestamp, name",
+        )?;
+        let mut delete_src_stmt = self
+            .connection
+            .prepare_cached("DELETE FROM registry_src WHERE rowid = ?1")?;
+        let mut delete_crate_stmt = self
+            .connection
+            .prepare_cached("DELETE FROM registry_crate WHERE rowid = ?1")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get_unwrap(0),
+                    row.get_unwrap(1),
+                    row.get_unwrap(2),
+                    row.get_unwrap(3),
+                    row.get_unwrap(4),
+                ))
+            })?
+            .collect::<Result<Vec<(i64, i64, String, String, u64)>, _>>()?;
+        let mut total_size: u64 = rows.iter().map(|r| r.4).sum();
+        let mut src_result = Vec::new();
+        let mut crate_result = Vec::new();
+        for (table, rowid, name, index_name, size) in rows {
+            if total_size <= max_size {
+                break;
+            }
+            if table == 1 {
+                src_result.push(Path::new(&index_name).join(name));
+                delete_src_stmt.execute([rowid])?;
+            } else {
+                crate_result.push(Path::new(&index_name).join(name));
+                delete_crate_stmt.execute([rowid])?;
+            }
+            total_size -= size;
+        }
+        Ok((src_result, crate_result))
     }
 
     fn populate_untracked_registry_index_in_path(&self, names: &[String]) -> CargoResult<()> {
@@ -796,6 +856,7 @@ impl GlobalLastUse {
     }
 
     fn populate_untracked_crate(&self, config: &Config) -> CargoResult<()> {
+        debug!("populating untracked crate files");
         let base_path = config.registry_cache_path().into_path_unlocked();
         let index_names = Self::names_from(&base_path)?;
         self.populate_untracked_registry_index_in_path(&index_names)?;
@@ -821,6 +882,7 @@ impl GlobalLastUse {
     }
 
     fn populate_untracked_src(&self, config: &Config) -> CargoResult<()> {
+        debug!("populating untracked src files");
         let base_path = config.registry_source_path().into_path_unlocked();
         let index_names = Self::names_from(&base_path)?;
         self.populate_untracked_registry_index_in_path(&index_names)?;
