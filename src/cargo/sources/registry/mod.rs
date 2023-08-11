@@ -589,7 +589,7 @@ impl<'cfg> RegistrySource<'cfg> {
             Ok(ok) => match serde_json::from_str::<LockMetadata>(&ok) {
                 Ok(lock_meta) if lock_meta.v == 1 => {
                     self.config
-                        .global_last_use()?
+                        .deferred_global_last_use()?
                         .mark_registry_src_used(last_use::RegistrySrc {
                             encoded_registry_name: self.name.clone(),
                             package_dir: package_dir.clone(),
@@ -679,7 +679,7 @@ impl<'cfg> RegistrySource<'cfg> {
         write!(ok, "{}", serde_json::to_string(&lock_meta).unwrap())?;
 
         self.config
-            .global_last_use()?
+            .deferred_global_last_use()?
             .mark_registry_src_used(last_use::RegistrySrc {
                 encoded_registry_name: self.name.clone(),
                 package_dir: package_dir.clone(),

@@ -303,7 +303,7 @@ impl<'cfg> Source for GitSource<'cfg> {
             .expect("update before download")
             .clone();
         self.config
-            .global_last_use()?
+            .deferred_global_last_use()?
             .mark_git_checkout_used(last_use::GitCheckout {
                 encoded_git_name: self.ident.clone(),
                 short_name,

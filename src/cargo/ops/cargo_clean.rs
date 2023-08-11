@@ -1,5 +1,6 @@
 use crate::core::compiler::{CompileKind, CompileMode, Layout, RustcTargetData};
 use crate::core::gc::{AutoGcKind, Gc, GcOpts};
+use crate::core::last_use::GlobalLastUse;
 use crate::core::profiles::Profiles;
 use crate::core::{PackageIdSpec, TargetKind, Workspace};
 use crate::ops;
@@ -92,8 +93,8 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
     if config.cli_unstable().gc {
         // TODO: Think about trying to consolidate these 4 lines somehow.
         let _lock = config.acquire_package_cache_lock()?;
-        let mut global_last_use = config.global_last_use()?;
-        let mut gc = Gc::new(config, &mut global_last_use);
+        let mut last_use = GlobalLastUse::new(&config)?;
+        let mut gc = Gc::new(config, &mut last_use);
         if no_opts_specified {
             let mut gc_opts = opts.gc_opts.clone();
             gc_opts.update_for_auto_gc(config, &[AutoGcKind::All], None)?;

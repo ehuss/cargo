@@ -1,4 +1,4 @@
-use cargo::core::last_use::{self, GlobalLastUse};
+use cargo::core::last_use::{self, DeferredGlobalLastUse};
 use cargo::Config;
 use std::fs;
 use std::path::Path;
@@ -26,7 +26,7 @@ fn main() {
         )
         .unwrap();
     let _lock = config.acquire_package_cache_lock().unwrap();
-    let mut last_use = GlobalLastUse::new(&config).unwrap();
+    let mut last_use = DeferredGlobalLastUse::new(&config).unwrap();
 
     // ~/.cargo/registry/cache/github.com-1ecc6299db9ec823
     let real_home = cargo::util::homedir(&std::env::current_dir().unwrap()).unwrap();

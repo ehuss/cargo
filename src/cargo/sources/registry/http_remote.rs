@@ -457,7 +457,7 @@ impl<'cfg> HttpRegistry<'cfg> {
 impl<'cfg> RegistryData for HttpRegistry<'cfg> {
     fn prepare(&self) -> CargoResult<()> {
         self.config
-            .global_last_use()?
+            .deferred_global_last_use()?
             .mark_registry_index_used(last_use::RegistryIndex {
                 encoded_registry_name: self.name.clone(),
             });

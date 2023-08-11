@@ -22,6 +22,17 @@ type Timestamp = u64;
 pub struct GlobalLastUse {
     /// Connection to the SQLite database.
     connection: Connection,
+    auto_gc_checked_this_session: bool,
+}
+
+/// This is a wrapper around [`GlobalLastUse`] that caches
+/// modifications in memory.
+///
+/// Modifications are saved in a batch via [`DeferredGlobalLastUse::save`]. This
+/// is here to improve performance.
+#[derive(Debug)]
+pub struct DeferredGlobalLastUse {
+    last_use: GlobalLastUse,
     /// Cache of registry keys, used for faster fetching.
     ///
     /// The key is the registry name (which is its directory name) and the
@@ -39,7 +50,6 @@ pub struct GlobalLastUse {
     git_db_timestamps: HashMap<GitDb, Timestamp>,
     git_checkout_timestamps: HashMap<GitCheckout, Timestamp>,
     save_err_has_warned: bool,
-    auto_gc_checked_this_session: bool,
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
@@ -151,7 +161,6 @@ impl GlobalLastUse {
             // enabled), just process everything in memory.
             Connection::open_in_memory()?
         };
-
         connection.execute("BEGIN TRANSACTION", [])?;
         let user_version =
             connection.query_row("SELECT user_version FROM pragma_user_version", [], |row| {
@@ -165,17 +174,8 @@ impl GlobalLastUse {
             connection.pragma_update(None, "user_version", &migrations.len())?;
         }
         connection.execute("COMMIT", [])?;
-
         Ok(GlobalLastUse {
             connection,
-            registry_keys: HashMap::new(),
-            git_keys: HashMap::new(),
-            registry_index_timestamps: HashMap::new(),
-            registry_crate_timestamps: HashMap::new(),
-            registry_src_timestamps: HashMap::new(),
-            git_db_timestamps: HashMap::new(),
-            git_checkout_timestamps: HashMap::new(),
-            save_err_has_warned: false,
             auto_gc_checked_this_session: false,
         })
     }
@@ -184,105 +184,12 @@ impl GlobalLastUse {
         config.home().join(LAST_USE_FILENAME)
     }
 
-    pub fn mark_registry_index_used(&mut self, registry_index: RegistryIndex) {
-        self.mark_registry_index_used_stamp(registry_index, None);
-    }
-
-    pub fn mark_registry_crate_used(&mut self, registry_crate: RegistryCrate) {
-        self.mark_registry_crate_used_stamp(registry_crate, None);
-    }
-
-    pub fn mark_registry_src_used(&mut self, registry_src: RegistrySrc) {
-        self.mark_registry_src_used_stamp(registry_src, None);
-    }
-
-    pub fn mark_git_checkout_used(&mut self, git_checkout: GitCheckout) {
-        self.mark_git_checkout_used_stamp(git_checkout, None);
-    }
-
-    pub fn mark_registry_index_used_stamp(
-        &mut self,
-        registry_index: RegistryIndex,
-        timestamp: Option<&SystemTime>,
-    ) {
-        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
-        self.registry_index_timestamps
-            .insert(registry_index, timestamp);
-    }
-
-    pub fn mark_registry_crate_used_stamp(
-        &mut self,
-        registry_crate: RegistryCrate,
-        timestamp: Option<&SystemTime>,
-    ) {
-        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
-        let index = RegistryIndex {
-            encoded_registry_name: registry_crate.encoded_registry_name.clone(),
-        };
-        self.registry_index_timestamps.insert(index, timestamp);
-        self.registry_crate_timestamps
-            .insert(registry_crate, timestamp);
-    }
-
-    pub fn mark_registry_src_used_stamp(
-        &mut self,
-        registry_src: RegistrySrc,
-        timestamp: Option<&SystemTime>,
-    ) {
-        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
-        let index = RegistryIndex {
-            encoded_registry_name: registry_src.encoded_registry_name.clone(),
-        };
-        self.registry_index_timestamps.insert(index, timestamp);
-        self.registry_src_timestamps.insert(registry_src, timestamp);
-    }
-
-    pub fn mark_git_checkout_used_stamp(
-        &mut self,
-        git_checkout: GitCheckout,
-        timestamp: Option<&SystemTime>,
-    ) {
-        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
-        let db = GitDb {
-            encoded_git_name: git_checkout.encoded_git_name.clone(),
-        };
-        self.git_db_timestamps.insert(db, timestamp);
-        self.git_checkout_timestamps.insert(git_checkout, timestamp);
-    }
-
     fn registry_id_from_name(&self, encoded_registry_name: &str) -> CargoResult<i64> {
         let mut stmt = self
             .connection
             .prepare_cached("SELECT id FROM registry_index WHERE name = ?")?;
         let id = stmt.query_row([encoded_registry_name], |row| row.get(0))?;
         Ok(id)
-    }
-
-    fn registry_id(&mut self, encoded_registry_name: &str) -> CargoResult<i64> {
-        match self.registry_keys.get(encoded_registry_name) {
-            Some(i) => Ok(*i),
-            None => {
-                let id = self.registry_id_from_name(encoded_registry_name)?;
-                self.registry_keys
-                    .insert(encoded_registry_name.to_string(), id);
-                Ok(id)
-            }
-        }
-    }
-
-    fn git_id(&mut self, encoded_git_name: &str) -> CargoResult<i64> {
-        match self.git_keys.get(encoded_git_name) {
-            Some(i) => Ok(*i),
-            None => {
-                let id = self.connection.query_row(
-                    "SELECT git_id FROM git_db WHERE name = ?",
-                    [encoded_git_name],
-                    |row| row.get(0),
-                )?;
-                self.git_keys.insert(encoded_git_name.to_string(), id);
-                Ok(id)
-            }
-        }
     }
 
     fn get_id_map(&self, table_name: &str, ids: &[i64]) -> CargoResult<HashMap<i64, PathBuf>> {
@@ -297,167 +204,6 @@ impl GlobalLastUse {
                 Ok((*id, name))
             })
             .collect()
-    }
-
-    fn insert_registry_index_from_cache(&mut self) -> CargoResult<()> {
-        let mut stmt = self.connection.prepare_cached(
-            "INSERT INTO registry_index (name, timestamp)
-                VALUES (?1, ?2)
-                ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
-                RETURNING id",
-        )?;
-        for (index, timestamp) in self.registry_index_timestamps.drain() {
-            trace!("insert registry index {index:?} {timestamp}");
-            let id = stmt.query_row(params![index.encoded_registry_name, timestamp], |row| {
-                row.get(0)
-            })?;
-            // TODO clone: InternedString, or use get instead?
-            match self
-                .registry_keys
-                .entry(index.encoded_registry_name.clone())
-            {
-                hash_map::Entry::Occupied(o) => {
-                    assert_eq!(*o.get(), id);
-                }
-                hash_map::Entry::Vacant(v) => {
-                    v.insert(id);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn insert_git_db_from_cache(&mut self) -> CargoResult<()> {
-        let mut stmt = self.connection.prepare_cached(
-            "INSERT INTO git_db (name, timestamp)
-                VALUES (?1, ?2)
-                ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
-                RETURNING id",
-        )?;
-        for (git_db, timestamp) in self.git_db_timestamps.drain() {
-            trace!("insert git db used {git_db:?} {timestamp}");
-            let id = stmt.query_row(params![git_db.encoded_git_name, timestamp], |row| {
-                row.get(0)
-            })?;
-            // TODO: clone
-            match self.git_keys.entry(git_db.encoded_git_name.clone()) {
-                hash_map::Entry::Occupied(o) => assert_eq!(*o.get(), id),
-                hash_map::Entry::Vacant(v) => {
-                    v.insert(id);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn insert_registry_crate_from_cache(&mut self) -> CargoResult<()> {
-        let mut registry_crate_timestamps = HashMap::new();
-        std::mem::swap(
-            &mut self.registry_crate_timestamps,
-            &mut registry_crate_timestamps,
-        );
-        for (registry_crate, timestamp) in registry_crate_timestamps {
-            trace!("insert registry crate {registry_crate:?} {timestamp}");
-            let registry_id = self.registry_id(&registry_crate.encoded_registry_name)?;
-            let mut stmt = self.connection.prepare_cached(
-                "INSERT INTO registry_crate (registry_id, name, size, timestamp)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
-            )?;
-            stmt.execute(params![
-                registry_id,
-                registry_crate.crate_filename,
-                registry_crate.size,
-                timestamp
-            ])?;
-        }
-        Ok(())
-    }
-
-    fn insert_registry_src_from_cache(&mut self) -> CargoResult<()> {
-        let mut registry_src_timestamps = HashMap::new();
-        std::mem::swap(
-            &mut self.registry_src_timestamps,
-            &mut registry_src_timestamps,
-        );
-        for (registry_src, timestamp) in registry_src_timestamps {
-            trace!("insert registry src {registry_src:?} {timestamp}");
-            let registry_id = self.registry_id(&registry_src.encoded_registry_name)?;
-            let mut stmt = self.connection.prepare_cached(
-                "INSERT INTO registry_src (registry_id, name, size, timestamp)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
-            )?;
-            debug!(
-                "inserting registry_src {:?} {:?}",
-                registry_src.package_dir, timestamp
-            );
-            stmt.execute(params![
-                registry_id,
-                registry_src.package_dir,
-                registry_src.size,
-                timestamp
-            ])?;
-        }
-
-        Ok(())
-    }
-
-    fn insert_git_checkout_from_cache(&mut self) -> CargoResult<()> {
-        let mut git_checkout_timestamps = HashMap::new();
-        std::mem::swap(
-            &mut self.git_checkout_timestamps,
-            &mut git_checkout_timestamps,
-        );
-        for (git_checkout, timestamp) in git_checkout_timestamps {
-            trace!("insert git checkout used {git_checkout:?} {timestamp}");
-            let git_id = self.git_id(&git_checkout.encoded_git_name)?;
-            let mut stmt = self.connection.prepare_cached(
-                "INSERT INTO git_checkout (git_id, name, timestamp)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
-            )?;
-            stmt.execute(params![git_id, git_checkout.short_name, timestamp])?;
-        }
-
-        Ok(())
-    }
-
-    pub fn save_no_error(&mut self, config: &Config) {
-        if let Err(e) = self.save() {
-            // TODO: Consider if this should be a hard error?
-            if !self.save_err_has_warned {
-                crate::display_warning_with_error(
-                    "failed to save last-use data",
-                    &e,
-                    &mut config.shell(),
-                );
-                self.save_err_has_warned = true;
-            }
-        }
-    }
-
-    pub fn save(&mut self) -> CargoResult<()> {
-        trace!("saving last-use data");
-        if self.registry_index_timestamps.is_empty()
-            && self.git_db_timestamps.is_empty()
-            && self.registry_crate_timestamps.is_empty()
-            && self.registry_src_timestamps.is_empty()
-            && self.git_checkout_timestamps.is_empty()
-        {
-            return Ok(());
-        }
-        self.connection.execute("BEGIN TRANSACTION", [])?;
-        // These must run before the ones that refer to their IDs.
-        self.insert_registry_index_from_cache()?;
-        self.insert_git_db_from_cache()?;
-        self.insert_registry_crate_from_cache()?;
-        self.insert_registry_src_from_cache()?;
-        self.insert_git_checkout_from_cache()?;
-
-        self.connection.execute("COMMIT", [])?;
-        trace!("last-use save complete");
-        Ok(())
     }
 
     pub fn registry_index_all(&self) -> CargoResult<Vec<(RegistryIndex, Timestamp)>> {
@@ -992,6 +738,292 @@ impl GlobalLastUse {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(paths)
+    }
+}
+
+impl DeferredGlobalLastUse {
+    pub fn new(config: &Config) -> CargoResult<DeferredGlobalLastUse> {
+        let last_use = GlobalLastUse::new(config)?;
+
+        Ok(DeferredGlobalLastUse {
+            last_use,
+            registry_keys: HashMap::new(),
+            git_keys: HashMap::new(),
+            registry_index_timestamps: HashMap::new(),
+            registry_crate_timestamps: HashMap::new(),
+            registry_src_timestamps: HashMap::new(),
+            git_db_timestamps: HashMap::new(),
+            git_checkout_timestamps: HashMap::new(),
+            save_err_has_warned: false,
+        })
+    }
+
+    /// Returns the underlying [`GlobalLastUse`].
+    ///
+    /// Use caution when using this method. This does not take into
+    /// consideration any unsaved data. Any unsaved data should be saved
+    /// before using this.
+    pub fn last_use(&mut self) -> &mut GlobalLastUse {
+        debug_assert!(self.registry_index_timestamps.is_empty());
+        debug_assert!(self.registry_crate_timestamps.is_empty());
+        debug_assert!(self.registry_src_timestamps.is_empty());
+        debug_assert!(self.git_db_timestamps.is_empty());
+        debug_assert!(self.git_checkout_timestamps.is_empty());
+        &mut self.last_use
+    }
+
+    pub fn mark_registry_index_used(&mut self, registry_index: RegistryIndex) {
+        self.mark_registry_index_used_stamp(registry_index, None);
+    }
+
+    pub fn mark_registry_crate_used(&mut self, registry_crate: RegistryCrate) {
+        self.mark_registry_crate_used_stamp(registry_crate, None);
+    }
+
+    pub fn mark_registry_src_used(&mut self, registry_src: RegistrySrc) {
+        self.mark_registry_src_used_stamp(registry_src, None);
+    }
+
+    pub fn mark_git_checkout_used(&mut self, git_checkout: GitCheckout) {
+        self.mark_git_checkout_used_stamp(git_checkout, None);
+    }
+
+    pub fn mark_registry_index_used_stamp(
+        &mut self,
+        registry_index: RegistryIndex,
+        timestamp: Option<&SystemTime>,
+    ) {
+        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
+        self.registry_index_timestamps
+            .insert(registry_index, timestamp);
+    }
+
+    pub fn mark_registry_crate_used_stamp(
+        &mut self,
+        registry_crate: RegistryCrate,
+        timestamp: Option<&SystemTime>,
+    ) {
+        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
+        let index = RegistryIndex {
+            encoded_registry_name: registry_crate.encoded_registry_name.clone(),
+        };
+        self.registry_index_timestamps.insert(index, timestamp);
+        self.registry_crate_timestamps
+            .insert(registry_crate, timestamp);
+    }
+
+    pub fn mark_registry_src_used_stamp(
+        &mut self,
+        registry_src: RegistrySrc,
+        timestamp: Option<&SystemTime>,
+    ) {
+        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
+        let index = RegistryIndex {
+            encoded_registry_name: registry_src.encoded_registry_name.clone(),
+        };
+        self.registry_index_timestamps.insert(index, timestamp);
+        self.registry_src_timestamps.insert(registry_src, timestamp);
+    }
+
+    pub fn mark_git_checkout_used_stamp(
+        &mut self,
+        git_checkout: GitCheckout,
+        timestamp: Option<&SystemTime>,
+    ) {
+        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
+        let db = GitDb {
+            encoded_git_name: git_checkout.encoded_git_name.clone(),
+        };
+        self.git_db_timestamps.insert(db, timestamp);
+        self.git_checkout_timestamps.insert(git_checkout, timestamp);
+    }
+
+    pub fn save(&mut self) -> CargoResult<()> {
+        trace!("saving last-use data");
+        if self.registry_index_timestamps.is_empty()
+            && self.git_db_timestamps.is_empty()
+            && self.registry_crate_timestamps.is_empty()
+            && self.registry_src_timestamps.is_empty()
+            && self.git_checkout_timestamps.is_empty()
+        {
+            return Ok(());
+        }
+        self.last_use.connection.execute("BEGIN TRANSACTION", [])?;
+        // These must run before the ones that refer to their IDs.
+        self.insert_registry_index_from_cache()?;
+        self.insert_git_db_from_cache()?;
+        self.insert_registry_crate_from_cache()?;
+        self.insert_registry_src_from_cache()?;
+        self.insert_git_checkout_from_cache()?;
+
+        self.last_use.connection.execute("COMMIT", [])?;
+        trace!("last-use save complete");
+        Ok(())
+    }
+
+    pub fn save_no_error(&mut self, config: &Config) {
+        if let Err(e) = self.save() {
+            // TODO: Consider if this should be a hard error?
+            if !self.save_err_has_warned {
+                crate::display_warning_with_error(
+                    "failed to save last-use data",
+                    &e,
+                    &mut config.shell(),
+                );
+                self.save_err_has_warned = true;
+            }
+        }
+    }
+
+    fn insert_registry_index_from_cache(&mut self) -> CargoResult<()> {
+        let mut stmt = self.last_use.connection.prepare_cached(
+            "INSERT INTO registry_index (name, timestamp)
+                VALUES (?1, ?2)
+                ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
+                RETURNING id",
+        )?;
+        for (index, timestamp) in self.registry_index_timestamps.drain() {
+            trace!("insert registry index {index:?} {timestamp}");
+            let id = stmt.query_row(params![index.encoded_registry_name, timestamp], |row| {
+                row.get(0)
+            })?;
+            // TODO clone: InternedString, or use get instead?
+            match self
+                .registry_keys
+                .entry(index.encoded_registry_name.clone())
+            {
+                hash_map::Entry::Occupied(o) => {
+                    assert_eq!(*o.get(), id);
+                }
+                hash_map::Entry::Vacant(v) => {
+                    v.insert(id);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_git_db_from_cache(&mut self) -> CargoResult<()> {
+        let mut stmt = self.last_use.connection.prepare_cached(
+            "INSERT INTO git_db (name, timestamp)
+                VALUES (?1, ?2)
+                ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
+                RETURNING id",
+        )?;
+        for (git_db, timestamp) in self.git_db_timestamps.drain() {
+            trace!("insert git db used {git_db:?} {timestamp}");
+            let id = stmt.query_row(params![git_db.encoded_git_name, timestamp], |row| {
+                row.get(0)
+            })?;
+            // TODO: clone
+            match self.git_keys.entry(git_db.encoded_git_name.clone()) {
+                hash_map::Entry::Occupied(o) => assert_eq!(*o.get(), id),
+                hash_map::Entry::Vacant(v) => {
+                    v.insert(id);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_registry_crate_from_cache(&mut self) -> CargoResult<()> {
+        let mut registry_crate_timestamps = HashMap::new();
+        std::mem::swap(
+            &mut self.registry_crate_timestamps,
+            &mut registry_crate_timestamps,
+        );
+        for (registry_crate, timestamp) in registry_crate_timestamps {
+            trace!("insert registry crate {registry_crate:?} {timestamp}");
+            let registry_id = self.registry_id(&registry_crate.encoded_registry_name)?;
+            let mut stmt = self.last_use.connection.prepare_cached(
+                "INSERT INTO registry_crate (registry_id, name, size, timestamp)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
+            )?;
+            stmt.execute(params![
+                registry_id,
+                registry_crate.crate_filename,
+                registry_crate.size,
+                timestamp
+            ])?;
+        }
+        Ok(())
+    }
+
+    fn insert_registry_src_from_cache(&mut self) -> CargoResult<()> {
+        let mut registry_src_timestamps = HashMap::new();
+        std::mem::swap(
+            &mut self.registry_src_timestamps,
+            &mut registry_src_timestamps,
+        );
+        for (registry_src, timestamp) in registry_src_timestamps {
+            trace!("insert registry src {registry_src:?} {timestamp}");
+            let registry_id = self.registry_id(&registry_src.encoded_registry_name)?;
+            let mut stmt = self.last_use.connection.prepare_cached(
+                "INSERT INTO registry_src (registry_id, name, size, timestamp)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
+            )?;
+            debug!(
+                "inserting registry_src {:?} {:?}",
+                registry_src.package_dir, timestamp
+            );
+            stmt.execute(params![
+                registry_id,
+                registry_src.package_dir,
+                registry_src.size,
+                timestamp
+            ])?;
+        }
+
+        Ok(())
+    }
+
+    fn insert_git_checkout_from_cache(&mut self) -> CargoResult<()> {
+        let mut git_checkout_timestamps = HashMap::new();
+        std::mem::swap(
+            &mut self.git_checkout_timestamps,
+            &mut git_checkout_timestamps,
+        );
+        for (git_checkout, timestamp) in git_checkout_timestamps {
+            trace!("insert git checkout used {git_checkout:?} {timestamp}");
+            let git_id = self.git_id(&git_checkout.encoded_git_name)?;
+            let mut stmt = self.last_use.connection.prepare_cached(
+                "INSERT INTO git_checkout (git_id, name, timestamp)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
+            )?;
+            stmt.execute(params![git_id, git_checkout.short_name, timestamp])?;
+        }
+
+        Ok(())
+    }
+
+    fn registry_id(&mut self, encoded_registry_name: &str) -> CargoResult<i64> {
+        match self.registry_keys.get(encoded_registry_name) {
+            Some(i) => Ok(*i),
+            None => {
+                let id = self.last_use.registry_id_from_name(encoded_registry_name)?;
+                self.registry_keys
+                    .insert(encoded_registry_name.to_string(), id);
+                Ok(id)
+            }
+        }
+    }
+
+    fn git_id(&mut self, encoded_git_name: &str) -> CargoResult<i64> {
+        match self.git_keys.get(encoded_git_name) {
+            Some(i) => Ok(*i),
+            None => {
+                let id = self.last_use.connection.query_row(
+                    "SELECT git_id FROM git_db WHERE name = ?",
+                    [encoded_git_name],
+                    |row| row.get(0),
+                )?;
+                self.git_keys.insert(encoded_git_name.to_string(), id);
+                Ok(id)
+            }
+        }
     }
 }
 

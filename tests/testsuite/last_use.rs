@@ -1,7 +1,7 @@
 //! Tests for last-use tracking and auto-gc.
 
 use super::config::ConfigBuilder;
-use cargo::core::last_use::{self, GlobalLastUse};
+use cargo::core::last_use::{self, DeferredGlobalLastUse, GlobalLastUse};
 use cargo::Config;
 use cargo_test_support::paths::{self, CargoPathExt};
 use cargo_test_support::registry::{Package, RegistryBuilder};
@@ -61,7 +61,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
     GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
 
     let _lock = config.acquire_package_cache_lock().unwrap();
-    let mut last_use = GlobalLastUse::new(&config).unwrap();
+    let mut last_use = DeferredGlobalLastUse::new(&config).unwrap();
 
     cache_dir.rm_rf();
     cache_dir.mkdir_p();
@@ -144,7 +144,7 @@ fn implies_source() {
     // corresponding index or git db also gets marked as used.
     let config = ConfigBuilder::new().unstable_flag("gc").build();
     let _lock = config.acquire_package_cache_lock().unwrap();
-    let mut last_use = GlobalLastUse::new(&config).unwrap();
+    let mut last_use = DeferredGlobalLastUse::new(&config).unwrap();
 
     last_use.mark_registry_crate_used(last_use::RegistryCrate {
         encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
@@ -162,7 +162,7 @@ fn implies_source() {
     });
     last_use.save().unwrap();
 
-    let mut indexes = last_use.registry_index_all().unwrap();
+    let mut indexes = last_use.last_use().registry_index_all().unwrap();
     assert_eq!(indexes.len(), 2);
     indexes.sort_by(|a, b| a.0.encoded_registry_name.cmp(&b.0.encoded_registry_name));
     assert_eq!(
@@ -174,7 +174,7 @@ fn implies_source() {
         "index.crates.io-6f17d22bba15001f"
     );
 
-    let dbs = last_use.git_db_all().unwrap();
+    let dbs = last_use.last_use().git_db_all().unwrap();
     assert_eq!(dbs.len(), 1);
     assert_eq!(dbs[0].0.encoded_git_name, "cargo-e7ff1db891893a9e");
 }

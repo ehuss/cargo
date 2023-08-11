@@ -1,4 +1,4 @@
-use cargo::core::last_use::{self, GlobalLastUse};
+use cargo::core::last_use::{self, DeferredGlobalLastUse, GlobalLastUse};
 use cargo::util::Config;
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::fs;
@@ -68,7 +68,7 @@ fn global_last_use_init(c: &mut Criterion) {
 fn global_last_use_empty_save(c: &mut Criterion) {
     let config = initialize_config();
     let _lock = config.acquire_package_cache_lock().unwrap();
-    let mut last_use = GlobalLastUse::new(&config).unwrap();
+    let mut last_use = DeferredGlobalLastUse::new(&config).unwrap();
 
     c.bench_function("global_last_use_empty_save", |b| {
         b.iter(|| {
@@ -597,7 +597,7 @@ fn global_last_use_update(c: &mut Criterion) {
         }
 
         fs::copy(&sample, homedir.join(".last-use")).unwrap();
-        let mut last_use = GlobalLastUse::new(&config).unwrap();
+        let mut last_use = DeferredGlobalLastUse::new(&config).unwrap();
         group.bench_with_input(size.to_string(), &size, |b, &size| {
             b.iter(|| {
                 for name in &RANDOM_SAMPLE[..size] {

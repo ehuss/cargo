@@ -212,7 +212,7 @@ impl<'cfg> RegistryData for RemoteRegistry<'cfg> {
     fn prepare(&self) -> CargoResult<()> {
         self.repo()?;
         self.config
-            .global_last_use()?
+            .deferred_global_last_use()?
             .mark_registry_index_used(last_use::RegistryIndex {
                 encoded_registry_name: self.name.clone(),
             });

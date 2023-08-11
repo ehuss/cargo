@@ -301,8 +301,8 @@ pub fn auto_gc(config: &Config) {
 
 fn auto_gc_inner(config: &Config) -> CargoResult<()> {
     let _lock = config.acquire_package_cache_lock()?;
-    let mut last_use = config.global_last_use()?;
-    let mut gc = Gc::new(config, &mut last_use);
+    let mut last_use = config.deferred_global_last_use()?;
+    let mut gc = Gc::new(config, last_use.last_use());
     let mut clean_ctx = CleanContext::new(config);
     gc.auto(&mut clean_ctx)?;
     Ok(())

@@ -52,7 +52,7 @@ pub(super) fn download(
         let meta = dst.metadata()?;
         if meta.len() > 0 {
             config
-                .global_last_use()?
+                .deferred_global_last_use()?
                 .mark_registry_crate_used(last_use::RegistryCrate {
                     encoded_registry_name,
                     crate_filename: pkg.tarball_name(),
@@ -124,7 +124,7 @@ pub(super) fn finish_download(
         anyhow::bail!("failed to verify the checksum of `{}`", pkg)
     }
     config
-        .global_last_use()?
+        .deferred_global_last_use()?
         .mark_registry_crate_used(last_use::RegistryCrate {
             encoded_registry_name,
             crate_filename: pkg.tarball_name(),
