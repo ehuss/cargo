@@ -489,9 +489,8 @@ impl<'cfg> PackageSet<'cfg> {
         downloads.success = true;
         drop(downloads);
 
-        let mut last_use = self.config.deferred_global_last_use()?;
-        last_use.save_no_error(self.config);
-        drop(last_use);
+        let mut deferred = self.config.deferred_global_last_use()?;
+        deferred.save_no_error(self.config);
         Ok(pkgs)
     }
 

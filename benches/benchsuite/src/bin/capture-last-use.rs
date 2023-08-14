@@ -1,4 +1,4 @@
-use cargo::core::last_use::{self, DeferredGlobalLastUse};
+use cargo::core::last_use::{self, DeferredGlobalLastUse, GlobalLastUse};
 use cargo::Config;
 use std::fs;
 use std::path::Path;
@@ -26,7 +26,8 @@ fn main() {
         )
         .unwrap();
     let _lock = config.acquire_package_cache_lock().unwrap();
-    let mut last_use = DeferredGlobalLastUse::new(&config).unwrap();
+    let mut deferred = DeferredGlobalLastUse::new();
+    let last_use = GlobalLastUse::new(&config).unwrap();
 
     // ~/.cargo/registry/cache/github.com-1ecc6299db9ec823
     let real_home = cargo::util::homedir(&std::env::current_dir().unwrap()).unwrap();
@@ -46,7 +47,7 @@ fn main() {
         for krate in fs::read_dir(registry.path()).unwrap() {
             let krate = krate.unwrap();
             let meta = krate.metadata().unwrap();
-            last_use.mark_registry_crate_used_stamp(
+            deferred.mark_registry_crate_used_stamp(
                 last_use::RegistryCrate {
                     encoded_registry_name: encoded_registry_name.clone(),
                     crate_filename: krate.file_name().to_string_lossy().into_owned(),
@@ -64,7 +65,7 @@ fn main() {
         for krate in fs::read_dir(registry.path()).unwrap() {
             let krate = krate.unwrap();
             let meta = krate.metadata().unwrap();
-            last_use.mark_registry_src_used_stamp(
+            deferred.mark_registry_src_used_stamp(
                 last_use::RegistrySrc {
                     encoded_registry_name: encoded_registry_name.clone(),
                     package_dir: krate.file_name().to_string_lossy().into_owned(),
@@ -90,7 +91,7 @@ fn main() {
         for co in fs::read_dir(git_source.path()).unwrap() {
             let co = co.unwrap();
             let meta = co.metadata().unwrap();
-            last_use.mark_git_checkout_used_stamp(
+            deferred.mark_git_checkout_used_stamp(
                 last_use::GitCheckout {
                     encoded_git_name: encoded_git_name.clone(),
                     short_name: co.file_name().to_string_lossy().into_owned(),
@@ -100,7 +101,7 @@ fn main() {
         }
     }
 
-    last_use.save().unwrap();
+    deferred.save(&last_use).unwrap();
     fs::rename(&last_use_db, homedir.join("last-use-sample")).unwrap();
     fs::remove_file(homedir.join(".package-cache")).unwrap();
 }

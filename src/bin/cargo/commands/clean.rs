@@ -4,6 +4,7 @@ use cargo::core::gc::{AutoGcKind, GcOpts};
 use cargo::ops::{self, CleanOptions};
 use cargo::util::print_available_packages;
 use cargo::CargoResult;
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 use std::time::Duration;
 
 pub fn cli() -> Command {
@@ -28,6 +29,16 @@ pub fn cli() -> Command {
             )
             .hide(true)
             .value_name("KINDS")
+            .value_parser(
+                PossibleValuesParser::new(["all", "download", "target", "shared-target"]).map(|x|
+                    match x.as_str() {
+                        "all" => AutoGcKind::All,
+                        "download" => AutoGcKind::Download,
+                        "target" => panic!("target is not yet implemented"),
+                        "shared-target" => panic!("shared-target is not yet implemented"),
+                        x => panic!("possible value out of sync with `{x}`"),
+                    }
+            ))
             .require_equals(true),
         )
         .arg(
@@ -196,18 +207,16 @@ pub fn exec(config: &mut Config, args: &ArgMatches) -> CliResult {
         unstable_gc("dry-run")?;
     }
 
-    let gc = if args.is_present_with_zero_values("gc") {
-        vec![AutoGcKind::All]
-    } else {
-        args._values_of("gc")
-            .into_iter()
-            .flat_map(|s| s.split(',').map(|s| s.to_string()).collect::<Vec<_>>())
-            .map(|s| AutoGcKind::from_str(&s))
-            .collect::<CargoResult<Vec<AutoGcKind>>>()?
-    };
+    let mut gc: Vec<_> = args
+        .get_many::<AutoGcKind>("gc")
+        .unwrap_or_default()
+        .cloned()
+        .collect();
+    if gc.is_empty() && args.contains_id("gc") {
+        gc.push(AutoGcKind::All);
+    }
 
     let mut gc_opts = GcOpts {
-        dry_run,
         max_src_age: unstable_duration_opt("max-src-age")?,
         max_crate_age: unstable_duration_opt("max-crate-age")?,
         max_index_age: unstable_duration_opt("max-index-age")?,

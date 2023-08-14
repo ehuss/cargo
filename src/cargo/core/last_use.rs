@@ -25,14 +25,12 @@ pub struct GlobalLastUse {
     auto_gc_checked_this_session: bool,
 }
 
-/// This is a wrapper around [`GlobalLastUse`] that caches
-/// modifications in memory.
+/// This is a cache of modifications that will be saved to disk all at once
+/// via the [`DeferredGlobalLastUse::save`] method.
 ///
-/// Modifications are saved in a batch via [`DeferredGlobalLastUse::save`]. This
-/// is here to improve performance.
+/// This is here to improve performance.
 #[derive(Debug)]
 pub struct DeferredGlobalLastUse {
-    last_use: GlobalLastUse,
     /// Cache of registry keys, used for faster fetching.
     ///
     /// The key is the registry name (which is its directory name) and the
@@ -154,6 +152,10 @@ impl GlobalLastUse {
     pub fn new(config: &Config) -> CargoResult<GlobalLastUse> {
         let connection = if config.cli_unstable().gc {
             let last_use_path = Self::db_path(config);
+            // A package cache lock is required to ensure only one cargo is
+            // accessing at the same time. If there is concurrent access, we
+            // want to rely on cargo's own "Blocking" system rather than
+            // blocking inside sqlite.
             let last_use_path = config.assert_package_cache_locked(&last_use_path);
             Connection::open(last_use_path)?
         } else {
@@ -161,7 +163,11 @@ impl GlobalLastUse {
             // enabled), just process everything in memory.
             Connection::open_in_memory()?
         };
-        connection.execute("BEGIN TRANSACTION", [])?;
+        // EXCLUSIVE ensures that it starts with an exclusive write lock. No
+        // other readers will be allowed. This generally shouldn't be needed
+        // if there is a package cache lock, but might be helpful in cases
+        // where cargo's `FileLock` failed.
+        connection.execute("BEGIN EXCLUSIVE TRANSACTION", [])?;
         let user_version =
             connection.query_row("SELECT user_version FROM pragma_user_version", [], |row| {
                 row.get(0)
@@ -184,6 +190,7 @@ impl GlobalLastUse {
         config.home().join(LAST_USE_FILENAME)
     }
 
+    /// Given an encoded registry name, returns its ID.
     fn registry_id_from_name(&self, encoded_registry_name: &str) -> CargoResult<i64> {
         let mut stmt = self
             .connection
@@ -192,6 +199,10 @@ impl GlobalLastUse {
         Ok(id)
     }
 
+    /// Returns a map of ID to path for the given ids in the given table.
+    ///
+    /// For example, given `registry_index` IDs, it returns filenames of the
+    /// form "index.crates.io-6f17d22bba15001f".
     fn get_id_map(&self, table_name: &str, ids: &[i64]) -> CargoResult<HashMap<i64, PathBuf>> {
         let mut stmt = self
             .connection
@@ -206,6 +217,7 @@ impl GlobalLastUse {
             .collect()
     }
 
+    /// Returns all index cache timestamps.
     pub fn registry_index_all(&self) -> CargoResult<Vec<(RegistryIndex, Timestamp)>> {
         let mut stmt = self
             .connection
@@ -223,6 +235,7 @@ impl GlobalLastUse {
         Ok(rows)
     }
 
+    /// Returns all registry crate cache timestamps.
     pub fn registry_crate_all(&self) -> CargoResult<Vec<(RegistryCrate, Timestamp)>> {
         let mut stmt = self.connection.prepare_cached(
             "SELECT registry_index.name, registry_crate.name, registry_crate.size, registry_crate.timestamp
@@ -246,6 +259,7 @@ impl GlobalLastUse {
         Ok(rows)
     }
 
+    /// Returns all registry source cache timestamps.
     pub fn registry_src_all(&self) -> CargoResult<Vec<(RegistrySrc, Timestamp)>> {
         let mut stmt = self.connection.prepare_cached(
             "SELECT registry_index.name, registry_src.name, registry_src.size, registry_src.timestamp
@@ -269,6 +283,7 @@ impl GlobalLastUse {
         Ok(rows)
     }
 
+    /// Returns all git db timestamps.
     pub fn git_db_all(&self) -> CargoResult<Vec<(GitDb, Timestamp)>> {
         let mut stmt = self
             .connection
@@ -284,6 +299,7 @@ impl GlobalLastUse {
         Ok(rows)
     }
 
+    /// Returns all git checkout timestamps.
     pub fn git_checkout_all(&self) -> CargoResult<Vec<(GitCheckout, Timestamp)>> {
         let mut stmt = self.connection.prepare_cached(
             "SELECT git_db.name, git_checkout.name, git_checkout.timestamp
@@ -305,6 +321,8 @@ impl GlobalLastUse {
         Ok(rows)
     }
 
+    /// Returns whether or not an auto GC should be performed, compared to the
+    /// last time it was recorded in the database.
     pub fn should_run_auto_gc(&mut self, frequency: Duration) -> CargoResult<bool> {
         trace!("should_run_auto_gc");
         if self.auto_gc_checked_this_session {
@@ -323,6 +341,8 @@ impl GlobalLastUse {
         Ok(should_run)
     }
 
+    /// Writes to the database to indicate that an automatic GC has just been
+    /// completed.
     pub fn set_last_auto_gc(&self) -> CargoResult<()> {
         self.connection
             .execute("UPDATE global_data SET last_auto_gc = ?1", [now()])?;
@@ -742,11 +762,8 @@ impl GlobalLastUse {
 }
 
 impl DeferredGlobalLastUse {
-    pub fn new(config: &Config) -> CargoResult<DeferredGlobalLastUse> {
-        let last_use = GlobalLastUse::new(config)?;
-
-        Ok(DeferredGlobalLastUse {
-            last_use,
+    pub fn new() -> DeferredGlobalLastUse {
+        DeferredGlobalLastUse {
             registry_keys: HashMap::new(),
             git_keys: HashMap::new(),
             registry_index_timestamps: HashMap::new(),
@@ -755,21 +772,15 @@ impl DeferredGlobalLastUse {
             git_db_timestamps: HashMap::new(),
             git_checkout_timestamps: HashMap::new(),
             save_err_has_warned: false,
-        })
+        }
     }
 
-    /// Returns the underlying [`GlobalLastUse`].
-    ///
-    /// Use caution when using this method. This does not take into
-    /// consideration any unsaved data. Any unsaved data should be saved
-    /// before using this.
-    pub fn last_use(&mut self) -> &mut GlobalLastUse {
-        debug_assert!(self.registry_index_timestamps.is_empty());
-        debug_assert!(self.registry_crate_timestamps.is_empty());
-        debug_assert!(self.registry_src_timestamps.is_empty());
-        debug_assert!(self.git_db_timestamps.is_empty());
-        debug_assert!(self.git_checkout_timestamps.is_empty());
-        &mut self.last_use
+    pub fn is_empty(&self) -> bool {
+        self.registry_index_timestamps.is_empty()
+            && self.registry_crate_timestamps.is_empty()
+            && self.registry_src_timestamps.is_empty()
+            && self.git_db_timestamps.is_empty()
+            && self.git_checkout_timestamps.is_empty()
     }
 
     pub fn mark_registry_index_used(&mut self, registry_index: RegistryIndex) {
@@ -838,31 +849,26 @@ impl DeferredGlobalLastUse {
         self.git_checkout_timestamps.insert(git_checkout, timestamp);
     }
 
-    pub fn save(&mut self) -> CargoResult<()> {
+    pub fn save(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
         trace!("saving last-use data");
-        if self.registry_index_timestamps.is_empty()
-            && self.git_db_timestamps.is_empty()
-            && self.registry_crate_timestamps.is_empty()
-            && self.registry_src_timestamps.is_empty()
-            && self.git_checkout_timestamps.is_empty()
-        {
+        if self.is_empty() {
             return Ok(());
         }
-        self.last_use.connection.execute("BEGIN TRANSACTION", [])?;
+        last_use.connection.execute("BEGIN TRANSACTION", [])?;
         // These must run before the ones that refer to their IDs.
-        self.insert_registry_index_from_cache()?;
-        self.insert_git_db_from_cache()?;
-        self.insert_registry_crate_from_cache()?;
-        self.insert_registry_src_from_cache()?;
-        self.insert_git_checkout_from_cache()?;
+        self.insert_registry_index_from_cache(last_use)?;
+        self.insert_git_db_from_cache(last_use)?;
+        self.insert_registry_crate_from_cache(last_use)?;
+        self.insert_registry_src_from_cache(last_use)?;
+        self.insert_git_checkout_from_cache(last_use)?;
 
-        self.last_use.connection.execute("COMMIT", [])?;
+        last_use.connection.execute("COMMIT", [])?;
         trace!("last-use save complete");
         Ok(())
     }
 
     pub fn save_no_error(&mut self, config: &Config) {
-        if let Err(e) = self.save() {
+        if let Err(e) = self.save_with_config(config) {
             // TODO: Consider if this should be a hard error?
             if !self.save_err_has_warned {
                 crate::display_warning_with_error(
@@ -875,8 +881,13 @@ impl DeferredGlobalLastUse {
         }
     }
 
-    fn insert_registry_index_from_cache(&mut self) -> CargoResult<()> {
-        let mut stmt = self.last_use.connection.prepare_cached(
+    fn save_with_config(&mut self, config: &Config) -> CargoResult<()> {
+        let last_use = config.global_last_use()?;
+        self.save(&last_use)
+    }
+
+    fn insert_registry_index_from_cache(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
+        let mut stmt = last_use.connection.prepare_cached(
             "INSERT INTO registry_index (name, timestamp)
                 VALUES (?1, ?2)
                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
@@ -903,8 +914,8 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn insert_git_db_from_cache(&mut self) -> CargoResult<()> {
-        let mut stmt = self.last_use.connection.prepare_cached(
+    fn insert_git_db_from_cache(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
+        let mut stmt = last_use.connection.prepare_cached(
             "INSERT INTO git_db (name, timestamp)
                 VALUES (?1, ?2)
                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
@@ -926,7 +937,7 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn insert_registry_crate_from_cache(&mut self) -> CargoResult<()> {
+    fn insert_registry_crate_from_cache(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
         let mut registry_crate_timestamps = HashMap::new();
         std::mem::swap(
             &mut self.registry_crate_timestamps,
@@ -934,8 +945,8 @@ impl DeferredGlobalLastUse {
         );
         for (registry_crate, timestamp) in registry_crate_timestamps {
             trace!("insert registry crate {registry_crate:?} {timestamp}");
-            let registry_id = self.registry_id(&registry_crate.encoded_registry_name)?;
-            let mut stmt = self.last_use.connection.prepare_cached(
+            let registry_id = self.registry_id(last_use, &registry_crate.encoded_registry_name)?;
+            let mut stmt = last_use.connection.prepare_cached(
                 "INSERT INTO registry_crate (registry_id, name, size, timestamp)
                  VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
@@ -950,7 +961,7 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn insert_registry_src_from_cache(&mut self) -> CargoResult<()> {
+    fn insert_registry_src_from_cache(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
         let mut registry_src_timestamps = HashMap::new();
         std::mem::swap(
             &mut self.registry_src_timestamps,
@@ -958,8 +969,8 @@ impl DeferredGlobalLastUse {
         );
         for (registry_src, timestamp) in registry_src_timestamps {
             trace!("insert registry src {registry_src:?} {timestamp}");
-            let registry_id = self.registry_id(&registry_src.encoded_registry_name)?;
-            let mut stmt = self.last_use.connection.prepare_cached(
+            let registry_id = self.registry_id(last_use, &registry_src.encoded_registry_name)?;
+            let mut stmt = last_use.connection.prepare_cached(
                 "INSERT INTO registry_src (registry_id, name, size, timestamp)
                  VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
@@ -979,7 +990,7 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn insert_git_checkout_from_cache(&mut self) -> CargoResult<()> {
+    fn insert_git_checkout_from_cache(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
         let mut git_checkout_timestamps = HashMap::new();
         std::mem::swap(
             &mut self.git_checkout_timestamps,
@@ -987,8 +998,8 @@ impl DeferredGlobalLastUse {
         );
         for (git_checkout, timestamp) in git_checkout_timestamps {
             trace!("insert git checkout used {git_checkout:?} {timestamp}");
-            let git_id = self.git_id(&git_checkout.encoded_git_name)?;
-            let mut stmt = self.last_use.connection.prepare_cached(
+            let git_id = self.git_id(last_use, &git_checkout.encoded_git_name)?;
+            let mut stmt = last_use.connection.prepare_cached(
                 "INSERT INTO git_checkout (git_id, name, timestamp)
                  VALUES (?1, ?2, ?3)
                  ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
@@ -999,11 +1010,15 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn registry_id(&mut self, encoded_registry_name: &str) -> CargoResult<i64> {
+    fn registry_id(
+        &mut self,
+        last_use: &GlobalLastUse,
+        encoded_registry_name: &str,
+    ) -> CargoResult<i64> {
         match self.registry_keys.get(encoded_registry_name) {
             Some(i) => Ok(*i),
             None => {
-                let id = self.last_use.registry_id_from_name(encoded_registry_name)?;
+                let id = last_use.registry_id_from_name(encoded_registry_name)?;
                 self.registry_keys
                     .insert(encoded_registry_name.to_string(), id);
                 Ok(id)
@@ -1011,11 +1026,11 @@ impl DeferredGlobalLastUse {
         }
     }
 
-    fn git_id(&mut self, encoded_git_name: &str) -> CargoResult<i64> {
+    fn git_id(&mut self, last_use: &GlobalLastUse, encoded_git_name: &str) -> CargoResult<i64> {
         match self.git_keys.get(encoded_git_name) {
             Some(i) => Ok(*i),
             None => {
-                let id = self.last_use.connection.query_row(
+                let id = last_use.connection.query_row(
                     "SELECT git_id FROM git_db WHERE name = ?",
                     [encoded_git_name],
                     |row| row.get(0),

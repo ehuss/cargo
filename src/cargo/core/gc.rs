@@ -1,51 +1,93 @@
-//! TODO
+//! Support for garbage collecting unused files from downloaded files or
+//! artifacts from the target directory.
+//!
+//! Garbage collection can be done "automatically" by cargo, which it does by
+//! default once a day when running any command that does a lot of work (like
+//! `cargo build`).
+//!
+//! Garbage collection can also be done manually via the `cargo clean` command
+//! by passing any option that requests deleting unused files.
+//!
+//! Garbage collection is guided by the last-use tracking implemented in the
+//! [`crate::core::last_use`] module.
 
 use crate::core::last_use::GlobalLastUse;
 use crate::ops::CleanContext;
+use crate::util::config::PackageCacheLock;
 use crate::{CargoResult, Config};
 use anyhow::format_err;
 use anyhow::{bail, Context};
 use serde::Deserialize;
 use std::time::Duration;
 
+/// Garbage collector.
 pub struct Gc<'a, 'config> {
     config: &'config Config,
     global_last_use: &'a mut GlobalLastUse,
+    /// A lock on the package cache.
+    ///
+    /// This is important to be held, since we don't want multiple cargos to
+    /// be allowed to write to the cache at the same time.
+    #[allow(dead_code)] // Held for drop.
+    lock: PackageCacheLock<'config>,
 }
 
-// NOTE: Not all of these options may get stabilized. Some of them are
-// very low-level details, and may not be something typical users need.
+/// Automatic garbage collection settings from the `gc.auto` config table.
+///
+/// NOTE: Not all of these options may get stabilized. Some of them are very
+/// low-level details, and may not be something typical users need.
+///
+/// If any of these options are `None`, the built-in default is used.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 struct AutoConfig {
+    /// The maximum frequency that automatic garbage collection happens.
     frequency: Option<String>,
+    /// Anything older than this duration will be deleted in the source cache.
     max_src_age: Option<String>,
+    /// Anything older than this duration will be deleted in the compressed crate cache.
     max_crate_age: Option<String>,
+    /// Any index older than this duration will be deleted from the index cache.
     max_index_age: Option<String>,
+    /// Any git checkout older than this duration will be deleted from the checkout cache.
     max_git_co_age: Option<String>,
+    /// Any git clone older than this duration will be deleted from the git cache.
     max_git_db_age: Option<String>,
 }
 
+/// Options to use for garbage collection.
 #[derive(Clone, Debug, Default)]
 pub struct GcOpts {
-    pub dry_run: bool,
+    /// The `--max-src-age` CLI option.
     pub max_src_age: Option<Duration>,
+    // The `--max-crate-age` CLI option.
     pub max_crate_age: Option<Duration>,
+    /// The `--max-index-age` CLI option.
     pub max_index_age: Option<Duration>,
+    /// The `--max-git-co-age` CLI option.
     pub max_git_co_age: Option<Duration>,
+    /// The `--max-git-db-age` CLI option.
     pub max_git_db_age: Option<Duration>,
+    /// The `--max-src-size` CLI option.
     pub max_src_size: Option<u64>,
+    /// The `--max-crate-size` CLI option.
     pub max_crate_size: Option<u64>,
+    /// The `--max-download-size` CLI option.
     pub max_download_size: Option<u64>,
 
+    /// The `--max-target-age` CLI option (UNIMPLEMENTED).
     pub max_target_age: Option<Duration>,
+    /// The `--max-shared-target-age CLI option (UNIMPLEMENTED).
     pub max_shared_target_age: Option<Duration>,
+    /// The `--max-target-size` CLI option  (UNIMPLEMENTED).
     pub max_target_size: Option<u64>,
+    /// The `--max-shared-target-size` CLI option (UNIMPLEMENTED).
     pub max_shared_target_size: Option<u64>,
 }
 
 impl GcOpts {
-    pub fn is_cache_opt_set(&self) -> bool {
+    /// Returns whether any download cache cleaning options are set.
+    pub fn is_download_cache_opt_set(&self) -> bool {
         self.max_src_age.is_some()
             || self.max_crate_age.is_some()
             || self.max_index_age.is_some()
@@ -56,6 +98,7 @@ impl GcOpts {
             || self.max_download_size.is_some()
     }
 
+    /// Returns whether any target directory cleaning options are set.
     pub fn is_target_opt_set(&self) -> bool {
         self.max_target_size.is_some()
             || self.max_target_age.is_some()
@@ -63,6 +106,26 @@ impl GcOpts {
             || self.max_shared_target_size.is_some()
     }
 
+    /// Updates the configuration of this [`GcOpts`] to incorporate the
+    /// settings from config and the given CLI options.
+    ///
+    /// * `kinds` is a list of [`AutoGcKind`] that is being requested to
+    ///   perform. This corresponds to the `cargo clean --gc` flag. If empty,
+    ///   no config options are incorporated.
+    /// * `max_download_age` is the `--max-download-age` CLI option which
+    ///   requires special handling since it implicitly overlaps two options.
+    ///   It will use the newer value of either this or the explicit value.
+    ///
+    /// The `kinds` list is used in a few different ways:
+    ///
+    /// * If empty, uses only the options the user specified on the
+    ///   command-line, like `cargo clean --max-crate-size=…`.
+    /// * If the user specified a `cargo clean --gc` option, then the `kinds`
+    ///   list is filled in with whatever `--gc` option the user picked, and
+    ///   then this function *merges* the settings between the requested
+    ///   `--gc` option and any options that were explicitly specified.
+    /// * `AutoGcKind::All` is used in `cargo clean` when no options are
+    ///   specified.
     pub fn update_for_auto_gc(
         &mut self,
         config: &Config,
@@ -124,34 +187,52 @@ impl GcOpts {
     }
 }
 
+/// The kind of automatic garbage collection to perform.
+///
+/// "Automatic" is the kind of gc performed automatically by Cargo in any
+/// command that is already doing a bunch of work. See [`auto_gc`] for more.
+#[derive(Clone, Debug)]
 pub enum AutoGcKind {
+    /// Automatically clean up the downloaded files *and* the target directory.
+    ///
+    /// This is the mode used by default.
     All,
+    /// Automatically clean only downloaded files.
+    ///
+    /// This corresponds to `cargo clean --gc=download`.
     Download,
+    /// Automatically clean only the target directory.
+    ///
+    /// THIS IS NOT IMPLEMENTED.
+    ///
+    /// This corresponds to `cargo clean --gc=target`.
     Target,
+    /// Automatically clean only the shared target directory.
+    ///
+    /// THIS IS NOT IMPLEMENTED.
+    ///
+    /// This corresponds to `cargo clean --gc=shared-target`.
     SharedTarget,
 }
 
-impl AutoGcKind {
-    pub fn from_str(s: &str) -> CargoResult<AutoGcKind> {
-        match s {
-            "all" => Ok(AutoGcKind::All),
-            "download" => Ok(AutoGcKind::Download),
-            "target" => bail!("target is unimplemented"),
-            "shared-target" => bail!("shared-target is unimplemented"),
-            _ => bail!("unexpected value `s`, expected all, download, target, or shared-target"),
-        }
-    }
-}
-
 impl<'a, 'config> Gc<'a, 'config> {
-    pub fn new(config: &'config Config, global_last_use: &'a mut GlobalLastUse) -> Gc<'a, 'config> {
-        Gc {
+    pub fn new(
+        config: &'config Config,
+        global_last_use: &'a mut GlobalLastUse,
+    ) -> CargoResult<Gc<'a, 'config>> {
+        let lock = config.acquire_package_cache_lock()?;
+        Ok(Gc {
             config,
             global_last_use,
-        }
+            lock,
+        })
     }
 
-    pub fn auto(&mut self, clean_ctx: &mut CleanContext<'config>) -> CargoResult<()> {
+    /// Performs automatic garbage cleaning.
+    ///
+    /// This returns immediately without doing work if garbage collection has
+    /// been performed recently (since `gc.auto.frequency`).
+    fn auto(&mut self, clean_ctx: &mut CleanContext<'config>) -> CargoResult<()> {
         if !self.config.cli_unstable().gc {
             return Ok(());
         }
@@ -178,6 +259,7 @@ impl<'a, 'config> Gc<'a, 'config> {
         Ok(())
     }
 
+    /// Performs garbage collection based on the given options.
     pub fn gc(
         &mut self,
         clean_ctx: &mut CleanContext<'config>,
@@ -189,6 +271,15 @@ impl<'a, 'config> Gc<'a, 'config> {
     }
 }
 
+/// Returns the shorter duration from `cur_span` versus `config_span`.
+///
+/// This is used because the user may specify multiple options which overlap,
+/// and this will pick whichever one is shorter.
+///
+/// * `cur_span` is the span we are comparing against (the value from the CLI
+///   option). If None, just returns the config duration.
+/// * `config_name` is the name of the config option the span is loaded from.
+/// * `config_span` is the span value loaded from config.
 fn newer_time_span_for_config(
     cur_span: Option<Duration>,
     config_name: &str,
@@ -198,6 +289,7 @@ fn newer_time_span_for_config(
     Ok(Some(maybe_newer_span(config_span, cur_span)))
 }
 
+/// Returns whichever [`Duration`] is shorter.
 fn maybe_newer_span(a: Duration, b: Option<Duration>) -> Duration {
     match b {
         Some(b) => {
@@ -211,6 +303,9 @@ fn maybe_newer_span(a: Duration, b: Option<Duration>) -> Duration {
     }
 }
 
+/// Parses a frequency string.
+///
+/// Returns `Ok(None)` if the frequency is "never".
 fn parse_frequency(frequency: &str) -> CargoResult<Option<Duration>> {
     if frequency == "always" {
         return Ok(Some(Duration::new(0, 0)));
@@ -226,6 +321,10 @@ fn parse_frequency(frequency: &str) -> CargoResult<Option<Duration>> {
     Ok(Some(duration))
 }
 
+/// Parses a time span value fetched from config.
+///
+/// This is here to provide better error messages specific to reading from
+/// config.
 fn parse_time_span_for_config(config_name: &str, span: &str) -> CargoResult<Duration> {
     maybe_parse_time_span(span).ok_or_else(|| {
         format_err!(
@@ -235,6 +334,10 @@ fn parse_time_span_for_config(config_name: &str, span: &str) -> CargoResult<Dura
     })
 }
 
+/// Parses a time span string.
+///
+/// Returns None if the value is not valid. See [`parse_time_span`] if you
+/// need a variant that generates an error message.
 fn maybe_parse_time_span(span: &str) -> Option<Duration> {
     let Some((left, right)) = span.split_once(' ') else {
         return None;
@@ -252,6 +355,7 @@ fn maybe_parse_time_span(span: &str) -> Option<Duration> {
     Some(Duration::from_secs(factor * count))
 }
 
+/// Parses a time span string.
 pub fn parse_time_span(span: &str) -> CargoResult<Duration> {
     maybe_parse_time_span(span).ok_or_else(|| {
         format_err!(
@@ -261,6 +365,7 @@ pub fn parse_time_span(span: &str) -> CargoResult<Duration> {
     })
 }
 
+/// Parses a file size using metric or IEC units.
 pub fn parse_human_size(size: &str) -> CargoResult<u64> {
     let size = size.replace(' ', "");
     match size.split_once(|c: char| !c.is_ascii_digit() && c != '.') {
@@ -285,6 +390,18 @@ pub fn parse_human_size(size: &str) -> CargoResult<u64> {
     }
 }
 
+/// Performs automatic garbage collection.
+///
+/// This is called in various places in Cargo where garbage collection should
+/// be performed automatically based on the config settings. The default
+/// behavior is to only clean once a day.
+///
+/// This should only be called in code paths for commands that are already
+/// doing a lot of work. It should only be called *after* crates are
+/// downloaded so that the last-use data is updated first.
+///
+/// It should be cheap to call this multiple times (subsequent calls are
+/// ignored), but try not to abuse that.
 pub fn auto_gc(config: &Config) {
     if !config.cli_unstable().gc {
         return;
@@ -301,8 +418,11 @@ pub fn auto_gc(config: &Config) {
 
 fn auto_gc_inner(config: &Config) -> CargoResult<()> {
     let _lock = config.acquire_package_cache_lock()?;
-    let mut last_use = config.deferred_global_last_use()?;
-    let mut gc = Gc::new(config, last_use.last_use());
+    // This should not be called when there are pending deferred entries.
+    let deferred = config.deferred_global_last_use()?;
+    debug_assert!(deferred.is_empty());
+    let mut last_use = config.global_last_use()?;
+    let mut gc = Gc::new(config, &mut last_use)?;
     let mut clean_ctx = CleanContext::new(config);
     gc.auto(&mut clean_ctx)?;
     Ok(())

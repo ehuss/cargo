@@ -43,7 +43,7 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
     let mut ctx = CleanContext::new(config);
     ctx.dry_run = opts.dry_run;
 
-    let any_cache_opts = opts.gc_opts.is_cache_opt_set();
+    let any_download_cache_opts = opts.gc_opts.is_download_cache_opt_set();
 
     // The following options need a workspace.
     let any_ws_opts = !opts.spec.is_empty()
@@ -53,7 +53,7 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
         || opts.gc_opts.is_target_opt_set();
 
     // When no options are specified, do the default action.
-    let no_opts_specified = !any_cache_opts && !any_ws_opts;
+    let no_opts_specified = !any_download_cache_opts && !any_ws_opts;
 
     if any_ws_opts || no_opts_specified {
         let ws = ws?;
@@ -94,8 +94,10 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
         // TODO: Think about trying to consolidate these 4 lines somehow.
         let _lock = config.acquire_package_cache_lock()?;
         let mut last_use = GlobalLastUse::new(&config)?;
-        let mut gc = Gc::new(config, &mut last_use);
+        let mut gc = Gc::new(config, &mut last_use)?;
         if no_opts_specified {
+            // This is the behavior for `cargo clean` without *any* options.
+            // It uses the defaults from config to determine what is cleaned.
             let mut gc_opts = opts.gc_opts.clone();
             gc_opts.update_for_auto_gc(config, &[AutoGcKind::All], None)?;
             gc.gc(&mut ctx, &gc_opts)?;

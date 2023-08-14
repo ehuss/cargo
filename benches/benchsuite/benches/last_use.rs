@@ -68,11 +68,12 @@ fn global_last_use_init(c: &mut Criterion) {
 fn global_last_use_empty_save(c: &mut Criterion) {
     let config = initialize_config();
     let _lock = config.acquire_package_cache_lock().unwrap();
-    let mut last_use = DeferredGlobalLastUse::new(&config).unwrap();
+    let mut deferred = DeferredGlobalLastUse::new();
+    let last_use = GlobalLastUse::new(&config).unwrap();
 
     c.bench_function("global_last_use_empty_save", |b| {
         b.iter(|| {
-            last_use.save().unwrap();
+            deferred.save(&last_use).unwrap();
         })
     });
 }
@@ -597,22 +598,23 @@ fn global_last_use_update(c: &mut Criterion) {
         }
 
         fs::copy(&sample, homedir.join(".last-use")).unwrap();
-        let mut last_use = DeferredGlobalLastUse::new(&config).unwrap();
+        let mut deferred = DeferredGlobalLastUse::new();
+        let last_use = GlobalLastUse::new(&config).unwrap();
         group.bench_with_input(size.to_string(), &size, |b, &size| {
             b.iter(|| {
                 for name in &RANDOM_SAMPLE[..size] {
-                    last_use.mark_registry_crate_used(last_use::RegistryCrate {
+                    deferred.mark_registry_crate_used(last_use::RegistryCrate {
                         encoded_registry_name: crates_io.clone(),
                         crate_filename: format!("{}.crate", name),
                         size: 12345678,
                     });
-                    last_use.mark_registry_src_used(last_use::RegistrySrc {
+                    deferred.mark_registry_src_used(last_use::RegistrySrc {
                         encoded_registry_name: crates_io.clone(),
                         package_dir: name.to_string(),
                         size: Some(12345678),
                     });
                 }
-                last_use.save().unwrap();
+                deferred.save(&last_use).unwrap();
             })
         });
     }

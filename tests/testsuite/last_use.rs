@@ -61,7 +61,8 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
     GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
 
     let _lock = config.acquire_package_cache_lock().unwrap();
-    let mut last_use = DeferredGlobalLastUse::new(&config).unwrap();
+    let last_use = GlobalLastUse::new(&config).unwrap();
+    let mut deferred = DeferredGlobalLastUse::new();
 
     cache_dir.rm_rf();
     cache_dir.mkdir_p();
@@ -69,7 +70,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
     src_dir.mkdir_p();
     let mut create = |name: &str, age, crate_size: u64, src_size: u64| {
         let crate_filename = format!("{name}.crate");
-        last_use.mark_registry_crate_used_stamp(
+        deferred.mark_registry_crate_used_stamp(
             last_use::RegistryCrate {
                 encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
                 crate_filename: crate_filename.clone(),
@@ -77,7 +78,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
             },
             Some(&days_ago(age)),
         );
-        last_use.mark_registry_src_used_stamp(
+        deferred.mark_registry_src_used_stamp(
             last_use::RegistrySrc {
                 encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
                 package_dir: name.to_string(),
@@ -98,7 +99,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
     for (name, age, crate_size, src_size) in test_crates {
         create(name, *age, *crate_size, *src_size);
     }
-    last_use.save().unwrap();
+    deferred.save(&last_use).unwrap();
 
     (cache_dir, src_dir)
 }
@@ -144,25 +145,26 @@ fn implies_source() {
     // corresponding index or git db also gets marked as used.
     let config = ConfigBuilder::new().unstable_flag("gc").build();
     let _lock = config.acquire_package_cache_lock().unwrap();
-    let mut last_use = DeferredGlobalLastUse::new(&config).unwrap();
+    let mut deferred = DeferredGlobalLastUse::new();
+    let last_use = GlobalLastUse::new(&config).unwrap();
 
-    last_use.mark_registry_crate_used(last_use::RegistryCrate {
+    deferred.mark_registry_crate_used(last_use::RegistryCrate {
         encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
         crate_filename: "regex-1.8.4.crate".to_string(),
         size: 123,
     });
-    last_use.mark_registry_src_used(last_use::RegistrySrc {
+    deferred.mark_registry_src_used(last_use::RegistrySrc {
         encoded_registry_name: "index.crates.io-6f17d22bba15001f".to_string(),
         package_dir: "rand-0.8.5".to_string(),
         size: None,
     });
-    last_use.mark_git_checkout_used(last_use::GitCheckout {
+    deferred.mark_git_checkout_used(last_use::GitCheckout {
         encoded_git_name: "cargo-e7ff1db891893a9e".to_string(),
         short_name: "f0a4ee0".to_string(),
     });
-    last_use.save().unwrap();
+    deferred.save(&last_use).unwrap();
 
-    let mut indexes = last_use.last_use().registry_index_all().unwrap();
+    let mut indexes = last_use.registry_index_all().unwrap();
     assert_eq!(indexes.len(), 2);
     indexes.sort_by(|a, b| a.0.encoded_registry_name.cmp(&b.0.encoded_registry_name));
     assert_eq!(
@@ -174,7 +176,7 @@ fn implies_source() {
         "index.crates.io-6f17d22bba15001f"
     );
 
-    let dbs = last_use.last_use().git_db_all().unwrap();
+    let dbs = last_use.git_db_all().unwrap();
     assert_eq!(dbs.len(), 1);
     assert_eq!(dbs[0].0.encoded_git_name, "cargo-e7ff1db891893a9e");
 }
