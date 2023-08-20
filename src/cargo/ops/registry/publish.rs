@@ -30,6 +30,7 @@ use crate::ops::Packages;
 use crate::sources::SourceConfigMap;
 use crate::sources::CRATES_IO_REGISTRY;
 use crate::util::auth;
+use crate::util::cache_lock::CacheLockMode;
 use crate::util::config::JobsConfig;
 use crate::util::Progress;
 use crate::util::ProgressStyle;
@@ -224,7 +225,7 @@ fn wait_for_publish(
     progress.tick_now(0, max, "")?;
     let is_available = loop {
         {
-            let _lock = config.acquire_package_cache_lock()?;
+            let _lock = config.acquire_package_cache_lock(CacheLockMode::DownloadExclusive)?;
             // Force re-fetching the source
             //
             // As pulling from a git source is expensive, we track when we've done it within the

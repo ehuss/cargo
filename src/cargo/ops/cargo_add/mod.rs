@@ -26,6 +26,7 @@ use crate::core::Registry;
 use crate::core::Shell;
 use crate::core::Summary;
 use crate::core::Workspace;
+use crate::util::cache_lock::CacheLockMode;
 use crate::util::toml_mut::dependency::Dependency;
 use crate::util::toml_mut::dependency::GitSource;
 use crate::util::toml_mut::dependency::MaybeWorkspace;
@@ -79,7 +80,9 @@ pub fn add(workspace: &Workspace<'_>, options: &AddOptions<'_>) -> CargoResult<(
     let mut registry = PackageRegistry::new(options.config)?;
 
     let deps = {
-        let _lock = options.config.acquire_package_cache_lock()?;
+        let _lock = options
+            .config
+            .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)?;
         registry.lock_patches();
         options
             .dependencies

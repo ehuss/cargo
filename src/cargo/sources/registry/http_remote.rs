@@ -5,6 +5,7 @@ use crate::core::{PackageId, SourceId};
 use crate::sources::registry::download;
 use crate::sources::registry::MaybeLock;
 use crate::sources::registry::{LoadResponse, RegistryConfig, RegistryData};
+use crate::util::cache_lock::CacheLockMode;
 use crate::util::errors::{CargoResult, HttpNotSuccessful};
 use crate::util::network::http::http_handle;
 use crate::util::network::retry::{Retry, RetryResult};
@@ -469,7 +470,8 @@ impl<'cfg> RegistryData for HttpRegistry<'cfg> {
     }
 
     fn assert_index_locked<'a>(&self, path: &'a Filesystem) -> &'a Path {
-        self.config.assert_package_cache_locked(path)
+        self.config
+            .assert_package_cache_locked(CacheLockMode::DownloadExclusive, path)
     }
 
     fn is_updated(&self) -> bool {

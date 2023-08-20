@@ -3,10 +3,11 @@
 
 use crate::core::gc::GcOpts;
 use crate::ops::{CleanContext, CleaningFolderBar};
+use crate::util::cache_lock::CacheLockMode;
 use crate::util::Filesystem;
 use crate::{CargoResult, Config};
 use anyhow::Context;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, ErrorCode, TransactionBehavior};
 use std::collections::{hash_map, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -21,7 +22,7 @@ type Timestamp = u64;
 #[derive(Debug)]
 pub struct GlobalLastUse {
     /// Connection to the SQLite database.
-    connection: Connection,
+    conn: Connection,
     auto_gc_checked_this_session: bool,
 }
 
@@ -83,8 +84,8 @@ pub struct GitCheckout {
 type Migration = Box<dyn Fn(&Connection) -> CargoResult<()>>;
 
 fn basic_migration(stmt: &'static str) -> Migration {
-    Box::new(|connection| {
-        connection.execute(stmt, [])?;
+    Box::new(|conn| {
+        conn.execute(stmt, [])?;
         Ok(())
     })
 }
@@ -138,8 +139,8 @@ fn migrations() -> Vec<Migration> {
                 last_auto_gc INTEGER NOT NULL
             )",
         ),
-        Box::new(|connection| {
-            connection.execute(
+        Box::new(|conn| {
+            conn.execute(
                 "INSERT INTO global_data (last_auto_gc) VALUES (?1)",
                 [now()],
             )?;
@@ -150,13 +151,15 @@ fn migrations() -> Vec<Migration> {
 
 impl GlobalLastUse {
     pub fn new(config: &Config) -> CargoResult<GlobalLastUse> {
-        let connection = if config.cli_unstable().gc {
+        let mut conn = if config.cli_unstable().gc {
             let last_use_path = Self::db_path(config);
             // A package cache lock is required to ensure only one cargo is
             // accessing at the same time. If there is concurrent access, we
-            // want to rely on cargo's own "Blocking" system rather than
-            // blocking inside sqlite.
-            let last_use_path = config.assert_package_cache_locked(&last_use_path);
+            // want to rely on cargo's own "Blocking" system (which can
+            // provide user feedback) rather than blocking inside sqlite
+            // (which by default has a short timeout).
+            let last_use_path = config
+                .assert_package_cache_locked(CacheLockMode::DownloadExclusive, &last_use_path);
             Connection::open(last_use_path)?
         } else {
             // To simplify things (so there aren't checks everywhere for being
@@ -167,21 +170,21 @@ impl GlobalLastUse {
         // other readers will be allowed. This generally shouldn't be needed
         // if there is a package cache lock, but might be helpful in cases
         // where cargo's `FileLock` failed.
-        connection.execute("BEGIN EXCLUSIVE TRANSACTION", [])?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Exclusive)?;
         let user_version =
-            connection.query_row("SELECT user_version FROM pragma_user_version", [], |row| {
+            tx.query_row("SELECT user_version FROM pragma_user_version", [], |row| {
                 row.get(0)
             })?;
         let migrations = migrations();
         if user_version < migrations.len() {
             for migration in &migrations[user_version..] {
-                migration(&connection)?;
+                migration(&tx)?;
             }
-            connection.pragma_update(None, "user_version", &migrations.len())?;
+            tx.pragma_update(None, "user_version", &migrations.len())?;
         }
-        connection.execute("COMMIT", [])?;
+        tx.commit()?;
         Ok(GlobalLastUse {
-            connection,
+            conn,
             auto_gc_checked_this_session: false,
         })
     }
@@ -191,10 +194,8 @@ impl GlobalLastUse {
     }
 
     /// Given an encoded registry name, returns its ID.
-    fn registry_id_from_name(&self, encoded_registry_name: &str) -> CargoResult<i64> {
-        let mut stmt = self
-            .connection
-            .prepare_cached("SELECT id FROM registry_index WHERE name = ?")?;
+    fn registry_id_from_name(conn: &Connection, encoded_registry_name: &str) -> CargoResult<i64> {
+        let mut stmt = conn.prepare_cached("SELECT id FROM registry_index WHERE name = ?")?;
         let id = stmt.query_row([encoded_registry_name], |row| row.get(0))?;
         Ok(id)
     }
@@ -203,10 +204,13 @@ impl GlobalLastUse {
     ///
     /// For example, given `registry_index` IDs, it returns filenames of the
     /// form "index.crates.io-6f17d22bba15001f".
-    fn get_id_map(&self, table_name: &str, ids: &[i64]) -> CargoResult<HashMap<i64, PathBuf>> {
-        let mut stmt = self
-            .connection
-            .prepare_cached(&format!("SELECT name FROM {table_name} WHERE id = ?1"))?;
+    fn get_id_map(
+        conn: &Connection,
+        table_name: &str,
+        ids: &[i64],
+    ) -> CargoResult<HashMap<i64, PathBuf>> {
+        let mut stmt =
+            conn.prepare_cached(&format!("SELECT name FROM {table_name} WHERE id = ?1"))?;
         ids.iter()
             .map(|id| {
                 let name = stmt.query_row(params![id], |row| {
@@ -220,7 +224,7 @@ impl GlobalLastUse {
     /// Returns all index cache timestamps.
     pub fn registry_index_all(&self) -> CargoResult<Vec<(RegistryIndex, Timestamp)>> {
         let mut stmt = self
-            .connection
+            .conn
             .prepare_cached("SELECT name, timestamp FROM registry_index")?;
         let rows = stmt
             .query_map([], |row| {
@@ -237,7 +241,7 @@ impl GlobalLastUse {
 
     /// Returns all registry crate cache timestamps.
     pub fn registry_crate_all(&self) -> CargoResult<Vec<(RegistryCrate, Timestamp)>> {
-        let mut stmt = self.connection.prepare_cached(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT registry_index.name, registry_crate.name, registry_crate.size, registry_crate.timestamp
              FROM registry_index, registry_crate
              WHERE registry_crate.registry_id = registry_index.id",
@@ -261,7 +265,7 @@ impl GlobalLastUse {
 
     /// Returns all registry source cache timestamps.
     pub fn registry_src_all(&self) -> CargoResult<Vec<(RegistrySrc, Timestamp)>> {
-        let mut stmt = self.connection.prepare_cached(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT registry_index.name, registry_src.name, registry_src.size, registry_src.timestamp
              FROM registry_index, registry_src
              WHERE registry_src.registry_id = registry_index.id",
@@ -286,7 +290,7 @@ impl GlobalLastUse {
     /// Returns all git db timestamps.
     pub fn git_db_all(&self) -> CargoResult<Vec<(GitDb, Timestamp)>> {
         let mut stmt = self
-            .connection
+            .conn
             .prepare_cached("SELECT name, timestamp FROM git_db")?;
         let rows = stmt
             .query_map([], |row| {
@@ -301,7 +305,7 @@ impl GlobalLastUse {
 
     /// Returns all git checkout timestamps.
     pub fn git_checkout_all(&self) -> CargoResult<Vec<(GitCheckout, Timestamp)>> {
-        let mut stmt = self.connection.prepare_cached(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT git_db.name, git_checkout.name, git_checkout.timestamp
              FROM git_db, git_checkout
              WHERE git_checkout.registry_id = git_db.id",
@@ -329,7 +333,7 @@ impl GlobalLastUse {
             return Ok(false);
         }
         let last_auto_gc: Timestamp =
-            self.connection
+            self.conn
                 .query_row("SELECT last_auto_gc FROM global_data", [], |row| row.get(0))?;
         let should_run = last_auto_gc + frequency.as_secs() < now();
         trace!(
@@ -344,21 +348,21 @@ impl GlobalLastUse {
     /// Writes to the database to indicate that an automatic GC has just been
     /// completed.
     pub fn set_last_auto_gc(&self) -> CargoResult<()> {
-        self.connection
+        self.conn
             .execute("UPDATE global_data SET last_auto_gc = ?1", [now()])?;
         Ok(())
     }
 
-    pub fn clean(&self, clean_ctx: &mut CleanContext<'_>, gc_opts: &GcOpts) -> CargoResult<()> {
+    pub fn clean(&mut self, clean_ctx: &mut CleanContext<'_>, gc_opts: &GcOpts) -> CargoResult<()> {
         let config = clean_ctx.config;
         let now = now();
         trace!("cleaning {gc_opts:?}");
-        self.connection.execute("BEGIN TRANSACTION", [])?;
+        let tx = self.conn.transaction()?;
         let src_paths = gc_opts
             .max_src_age
             .map(|max_age| {
                 let max_age = now - max_age.as_secs();
-                self.get_registry_items_to_clean_age(max_age, "registry_src")
+                Self::get_registry_items_to_clean_age(&tx, max_age, "registry_src")
             })
             .transpose()?
             .unwrap_or_default();
@@ -366,7 +370,7 @@ impl GlobalLastUse {
             .max_crate_age
             .map(|max_age| {
                 let max_age = now - max_age.as_secs();
-                self.get_registry_items_to_clean_age(max_age, "registry_crate")
+                Self::get_registry_items_to_clean_age(&tx, max_age, "registry_crate")
             })
             .transpose()?
             .unwrap_or_default();
@@ -374,7 +378,7 @@ impl GlobalLastUse {
             .max_index_age
             .map(|max_age| {
                 let max_age = now - max_age.as_secs();
-                self.get_registry_index_to_clean(max_age)
+                Self::get_registry_index_to_clean(&tx, max_age)
             })
             .transpose()?
             .unwrap_or_default();
@@ -382,7 +386,7 @@ impl GlobalLastUse {
             .max_git_co_age
             .map(|max_age| {
                 let max_age = now - max_age.as_secs();
-                self.get_git_co_items_to_clean(max_age)
+                Self::get_git_co_items_to_clean(&tx, max_age)
             })
             .transpose()?
             .unwrap_or_default();
@@ -390,7 +394,7 @@ impl GlobalLastUse {
             .max_git_db_age
             .map(|max_age| {
                 let max_age = now - max_age.as_secs();
-                self.get_git_db_items_to_clean(max_age)
+                Self::get_git_db_items_to_clean(&tx, max_age)
             })
             .transpose()?
             .unwrap_or_default();
@@ -400,18 +404,20 @@ impl GlobalLastUse {
         let mut size_crate_paths = gc_opts
             .max_crate_size
             .map(|max_size| {
-                self.get_registry_items_to_clean_size(config, max_size, "registry_crate")
+                Self::get_registry_items_to_clean_size(&tx, config, max_size, "registry_crate")
             })
             .transpose()?
             .unwrap_or_default();
         let mut size_src_paths = gc_opts
             .max_src_size
-            .map(|max_size| self.get_registry_items_to_clean_size(config, max_size, "registry_src"))
+            .map(|max_size| {
+                Self::get_registry_items_to_clean_size(&tx, config, max_size, "registry_src")
+            })
             .transpose()?
             .unwrap_or_default();
         let (combined_src, combined_crate) = gc_opts
             .max_download_size
-            .map(|max_size| self.get_registry_items_to_clean_size_both(config, max_size))
+            .map(|max_size| Self::get_registry_items_to_clean_size_both(&tx, config, max_size))
             .transpose()?
             .unwrap_or_default();
         size_crate_paths.extend(combined_crate);
@@ -449,20 +455,20 @@ impl GlobalLastUse {
         }
 
         if clean_ctx.dry_run {
-            self.connection.execute("ROLLBACK", [])?;
+            tx.rollback()?;
         } else {
-            self.connection.execute("COMMIT", [])?;
+            tx.commit()?;
         }
         Ok(())
     }
 
     fn get_registry_items_to_clean_age(
-        &self,
+        conn: &Connection,
         max_age: Timestamp,
         table_name: &str,
     ) -> CargoResult<Vec<PathBuf>> {
         debug!("cleaning {table_name} since {max_age:?}");
-        let mut stmt = self.connection.prepare_cached(&format!(
+        let mut stmt = conn.prepare_cached(&format!(
             "DELETE FROM {table_name} WHERE timestamp < ?1
                 RETURNING registry_id, name"
         ))?;
@@ -474,7 +480,7 @@ impl GlobalLastUse {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
-        let id_map = self.get_id_map("registry_index", &ids)?;
+        let id_map = Self::get_id_map(conn, "registry_index", &ids)?;
         let paths = rows
             .iter()
             .map(|(id, name)| {
@@ -486,22 +492,21 @@ impl GlobalLastUse {
     }
 
     fn get_registry_items_to_clean_size(
-        &self,
+        conn: &Connection,
         config: &Config,
         max_size: u64,
         table_name: &str,
     ) -> CargoResult<Vec<PathBuf>> {
         match table_name {
-            "registry_crate" => self.populate_untracked_crate(config)?,
-            "registry_src" => self.populate_untracked_src(config)?,
+            "registry_crate" => Self::populate_untracked_crate(conn, config)?,
+            "registry_src" => Self::populate_untracked_src(conn, config)?,
             _ => panic!("unexpected table {table_name}"),
         }
         debug!("cleaning {table_name} till under {max_size:?}");
-        let total_size: u64 = self.connection.query_row(
-            &format!("SELECT SUM(size) FROM {table_name}"),
-            [],
-            |row| row.get(0),
-        )?;
+        let total_size: u64 =
+            conn.query_row(&format!("SELECT SUM(size) FROM {table_name}"), [], |row| {
+                row.get(0)
+            })?;
         if total_size <= max_size {
             return Ok(Vec::new());
         }
@@ -509,7 +514,7 @@ impl GlobalLastUse {
         //
         // The ORDER BY includes `name` mainly for test purposes so that
         // entries with the same timestamp have deterministic behavior.
-        let mut stmt = self.connection.prepare(&format!(
+        let mut stmt = conn.prepare(&format!(
             "DELETE FROM {table_name} WHERE rowid IN \
                 (SELECT x.rowid FROM \
                     (SELECT rowid, size, sum(size) OVER \
@@ -527,7 +532,7 @@ impl GlobalLastUse {
             .collect::<Result<Vec<_>, _>>()?;
         // Convert registry_id to the encoded registry name, and join those.
         let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
-        let id_map = self.get_id_map("registry_index", &ids)?;
+        let id_map = Self::get_id_map(conn, "registry_index", &ids)?;
         let paths = rows
             .iter()
             .map(|(id, name)| {
@@ -539,15 +544,15 @@ impl GlobalLastUse {
     }
 
     fn get_registry_items_to_clean_size_both(
-        &self,
+        conn: &Connection,
         config: &Config,
         max_size: u64,
     ) -> CargoResult<(Vec<PathBuf>, Vec<PathBuf>)> {
-        self.populate_untracked_crate(config)?;
-        self.populate_untracked_src(config)?;
+        Self::populate_untracked_crate(conn, config)?;
+        Self::populate_untracked_src(conn, config)?;
         debug!("cleaning download till under {max_size:?}");
 
-        let mut stmt = self.connection.prepare_cached(
+        let mut stmt = conn.prepare_cached(
             "SELECT 1, registry_src.rowid, registry_src.name AS name, registry_index.name,
                     registry_src.size, registry_src.timestamp AS timestamp
              FROM registry_src, registry_index
@@ -562,12 +567,10 @@ impl GlobalLastUse {
 
              ORDER BY timestamp, name",
         )?;
-        let mut delete_src_stmt = self
-            .connection
-            .prepare_cached("DELETE FROM registry_src WHERE rowid = ?1")?;
-        let mut delete_crate_stmt = self
-            .connection
-            .prepare_cached("DELETE FROM registry_crate WHERE rowid = ?1")?;
+        let mut delete_src_stmt =
+            conn.prepare_cached("DELETE FROM registry_src WHERE rowid = ?1")?;
+        let mut delete_crate_stmt =
+            conn.prepare_cached("DELETE FROM registry_crate WHERE rowid = ?1")?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -598,8 +601,11 @@ impl GlobalLastUse {
         Ok((src_result, crate_result))
     }
 
-    fn populate_untracked_registry_index_in_path(&self, names: &[String]) -> CargoResult<()> {
-        let mut stmt = self.connection.prepare_cached(
+    fn populate_untracked_registry_index_in_path(
+        conn: &Connection,
+        names: &[String],
+    ) -> CargoResult<()> {
+        let mut stmt = conn.prepare_cached(
             "INSERT INTO registry_index (name, timestamp)
                 VALUES (?1, ?2)
                 ON CONFLICT DO NOTHING",
@@ -621,20 +627,20 @@ impl GlobalLastUse {
         Ok(names)
     }
 
-    fn populate_untracked_crate(&self, config: &Config) -> CargoResult<()> {
+    fn populate_untracked_crate(conn: &Connection, config: &Config) -> CargoResult<()> {
         debug!("populating untracked crate files");
         let base_path = config.registry_cache_path().into_path_unlocked();
         let index_names = Self::names_from(&base_path)?;
-        self.populate_untracked_registry_index_in_path(&index_names)?;
+        Self::populate_untracked_registry_index_in_path(conn, &index_names)?;
 
-        let mut insert_stmt = self.connection.prepare_cached(
+        let mut insert_stmt = conn.prepare_cached(
             "INSERT INTO registry_crate (registry_id, name, size, timestamp)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT DO NOTHING",
         )?;
         let now = now();
         for index_name in index_names {
-            let id = self.registry_id_from_name(&index_name)?;
+            let id = Self::registry_id_from_name(conn, &index_name)?;
             let index_path = base_path.join(index_name);
             for crate_name in Self::names_from(&index_path)? {
                 if crate_name.ends_with(".crate") {
@@ -647,24 +653,24 @@ impl GlobalLastUse {
         Ok(())
     }
 
-    fn populate_untracked_src(&self, config: &Config) -> CargoResult<()> {
+    fn populate_untracked_src(conn: &Connection, config: &Config) -> CargoResult<()> {
         debug!("populating untracked src files");
         let base_path = config.registry_source_path().into_path_unlocked();
         let index_names = Self::names_from(&base_path)?;
-        self.populate_untracked_registry_index_in_path(&index_names)?;
+        Self::populate_untracked_registry_index_in_path(conn, &index_names)?;
 
-        let mut select_stmt = self.connection.prepare_cached(
+        let mut select_stmt = conn.prepare_cached(
             "SELECT 1 FROM registry_src
              WHERE registry_id=?1 AND name=?2",
         )?;
-        let mut insert_stmt = self.connection.prepare_cached(
+        let mut insert_stmt = conn.prepare_cached(
             "INSERT INTO registry_src (registry_id, name, size, timestamp)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT DO NOTHING",
         )?;
         let now = now();
         for index_name in index_names {
-            let id = self.registry_id_from_name(&index_name)?;
+            let id = Self::registry_id_from_name(conn, &index_name)?;
             let index_path = base_path.join(index_name);
             for src_name in Self::names_from(&index_path)? {
                 if select_stmt.exists(params![id, src_name])? {
@@ -681,14 +687,13 @@ impl GlobalLastUse {
         }
 
         // Update NULL size entries.
-        let mut null_stmt = self.connection.prepare_cached(
+        let mut null_stmt = conn.prepare_cached(
             "SELECT registry_src.rowid, registry_src.name, registry_index.name
              FROM registry_src, registry_index
              WHERE registry_src.size IS NULL AND registry_src.registry_id = registry_index.id",
         )?;
-        let mut update_stmt = self
-            .connection
-            .prepare_cached("UPDATE registry_src SET size=?1 WHERE rowid=?2")?;
+        let mut update_stmt =
+            conn.prepare_cached("UPDATE registry_src SET size=?1 WHERE rowid=?2")?;
         let rows = null_stmt.query_map([], |row| {
             Ok((row.get_unwrap(0), row.get_unwrap(1), row.get_unwrap(2)))
         })?;
@@ -707,9 +712,12 @@ impl GlobalLastUse {
         Ok(())
     }
 
-    fn get_registry_index_to_clean(&self, max_age: Timestamp) -> CargoResult<Vec<PathBuf>> {
+    fn get_registry_index_to_clean(
+        conn: &Connection,
+        max_age: Timestamp,
+    ) -> CargoResult<Vec<PathBuf>> {
         debug!("cleaning index since {max_age:?}");
-        let mut stmt = self.connection.prepare_cached(&format!(
+        let mut stmt = conn.prepare_cached(&format!(
             "DELETE FROM registry_index WHERE timestamp < ?1
                 RETURNING name"
         ))?;
@@ -721,9 +729,12 @@ impl GlobalLastUse {
         Ok(paths)
     }
 
-    fn get_git_co_items_to_clean(&self, max_age: Timestamp) -> CargoResult<Vec<PathBuf>> {
+    fn get_git_co_items_to_clean(
+        conn: &Connection,
+        max_age: Timestamp,
+    ) -> CargoResult<Vec<PathBuf>> {
         debug!("cleaning git co since {max_age:?}");
-        let mut stmt = self.connection.prepare_cached(&format!(
+        let mut stmt = conn.prepare_cached(&format!(
             "DELETE FROM git_checkout WHERE timestamp < ?1
                 RETURNING git_id, name"
         ))?;
@@ -735,7 +746,7 @@ impl GlobalLastUse {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
-        let id_map = self.get_id_map("git_db", &ids)?;
+        let id_map = Self::get_id_map(conn, "git_db", &ids)?;
         let paths = rows
             .iter()
             .map(|(id, name)| {
@@ -746,9 +757,12 @@ impl GlobalLastUse {
         Ok(paths)
     }
 
-    fn get_git_db_items_to_clean(&self, max_age: Timestamp) -> CargoResult<Vec<PathBuf>> {
+    fn get_git_db_items_to_clean(
+        conn: &Connection,
+        max_age: Timestamp,
+    ) -> CargoResult<Vec<PathBuf>> {
         debug!("cleaning git db since {max_age:?}");
-        let mut stmt = self.connection.prepare_cached(&format!(
+        let mut stmt = conn.prepare_cached(&format!(
             "DELETE FROM git_db WHERE timestamp < ?1
                 RETURNING name"
         ))?;
@@ -781,6 +795,14 @@ impl DeferredGlobalLastUse {
             && self.registry_src_timestamps.is_empty()
             && self.git_db_timestamps.is_empty()
             && self.git_checkout_timestamps.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.registry_index_timestamps.clear();
+        self.registry_crate_timestamps.clear();
+        self.registry_src_timestamps.clear();
+        self.git_db_timestamps.clear();
+        self.git_checkout_timestamps.clear();
     }
 
     pub fn mark_registry_index_used(&mut self, registry_index: RegistryIndex) {
@@ -849,45 +871,58 @@ impl DeferredGlobalLastUse {
         self.git_checkout_timestamps.insert(git_checkout, timestamp);
     }
 
-    pub fn save(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
+    /// Saves all of the deferred information to the database.
+    ///
+    /// This will also clear the state of self.
+    pub fn save(&mut self, last_use: &mut GlobalLastUse) -> CargoResult<()> {
         trace!("saving last-use data");
         if self.is_empty() {
             return Ok(());
         }
-        last_use.connection.execute("BEGIN TRANSACTION", [])?;
+        let tx = last_use.conn.transaction()?;
         // These must run before the ones that refer to their IDs.
-        self.insert_registry_index_from_cache(last_use)?;
-        self.insert_git_db_from_cache(last_use)?;
-        self.insert_registry_crate_from_cache(last_use)?;
-        self.insert_registry_src_from_cache(last_use)?;
-        self.insert_git_checkout_from_cache(last_use)?;
-
-        last_use.connection.execute("COMMIT", [])?;
+        self.insert_registry_index_from_cache(&tx)?;
+        self.insert_git_db_from_cache(&tx)?;
+        self.insert_registry_crate_from_cache(&tx)?;
+        self.insert_registry_src_from_cache(&tx)?;
+        self.insert_git_checkout_from_cache(&tx)?;
+        tx.commit()?;
         trace!("last-use save complete");
         Ok(())
     }
 
+    /// Variant of [`DeferredGlobalLastUse::save`] that does not return an
+    /// error.
+    ///
+    /// This will log or display a warning to the user.
     pub fn save_no_error(&mut self, config: &Config) {
         if let Err(e) = self.save_with_config(config) {
+            // Because there is an assertion in auto-gc that this is empty,
+            // be sure to clear it so that assertion doesn't fail.
+            self.clear();
             // TODO: Consider if this should be a hard error?
             if !self.save_err_has_warned {
-                crate::display_warning_with_error(
-                    "failed to save last-use data",
-                    &e,
-                    &mut config.shell(),
-                );
-                self.save_err_has_warned = true;
+                if is_silent_error(&e) {
+                    tracing::warn!("failed to save last-use data: {e:?}");
+                } else {
+                    crate::display_warning_with_error(
+                        "failed to save last-use data",
+                        &e,
+                        &mut config.shell(),
+                    );
+                    self.save_err_has_warned = true;
+                }
             }
         }
     }
 
     fn save_with_config(&mut self, config: &Config) -> CargoResult<()> {
-        let last_use = config.global_last_use()?;
-        self.save(&last_use)
+        let mut last_use = config.global_last_use()?;
+        self.save(&mut last_use)
     }
 
-    fn insert_registry_index_from_cache(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
-        let mut stmt = last_use.connection.prepare_cached(
+    fn insert_registry_index_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
+        let mut stmt = conn.prepare_cached(
             "INSERT INTO registry_index (name, timestamp)
                 VALUES (?1, ?2)
                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
@@ -914,8 +949,8 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn insert_git_db_from_cache(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
-        let mut stmt = last_use.connection.prepare_cached(
+    fn insert_git_db_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
+        let mut stmt = conn.prepare_cached(
             "INSERT INTO git_db (name, timestamp)
                 VALUES (?1, ?2)
                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
@@ -937,7 +972,7 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn insert_registry_crate_from_cache(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
+    fn insert_registry_crate_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
         let mut registry_crate_timestamps = HashMap::new();
         std::mem::swap(
             &mut self.registry_crate_timestamps,
@@ -945,8 +980,8 @@ impl DeferredGlobalLastUse {
         );
         for (registry_crate, timestamp) in registry_crate_timestamps {
             trace!("insert registry crate {registry_crate:?} {timestamp}");
-            let registry_id = self.registry_id(last_use, &registry_crate.encoded_registry_name)?;
-            let mut stmt = last_use.connection.prepare_cached(
+            let registry_id = self.registry_id(conn, &registry_crate.encoded_registry_name)?;
+            let mut stmt = conn.prepare_cached(
                 "INSERT INTO registry_crate (registry_id, name, size, timestamp)
                  VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
@@ -961,7 +996,7 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn insert_registry_src_from_cache(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
+    fn insert_registry_src_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
         let mut registry_src_timestamps = HashMap::new();
         std::mem::swap(
             &mut self.registry_src_timestamps,
@@ -969,8 +1004,8 @@ impl DeferredGlobalLastUse {
         );
         for (registry_src, timestamp) in registry_src_timestamps {
             trace!("insert registry src {registry_src:?} {timestamp}");
-            let registry_id = self.registry_id(last_use, &registry_src.encoded_registry_name)?;
-            let mut stmt = last_use.connection.prepare_cached(
+            let registry_id = self.registry_id(conn, &registry_src.encoded_registry_name)?;
+            let mut stmt = conn.prepare_cached(
                 "INSERT INTO registry_src (registry_id, name, size, timestamp)
                  VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
@@ -990,7 +1025,7 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn insert_git_checkout_from_cache(&mut self, last_use: &GlobalLastUse) -> CargoResult<()> {
+    fn insert_git_checkout_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
         let mut git_checkout_timestamps = HashMap::new();
         std::mem::swap(
             &mut self.git_checkout_timestamps,
@@ -998,8 +1033,8 @@ impl DeferredGlobalLastUse {
         );
         for (git_checkout, timestamp) in git_checkout_timestamps {
             trace!("insert git checkout used {git_checkout:?} {timestamp}");
-            let git_id = self.git_id(last_use, &git_checkout.encoded_git_name)?;
-            let mut stmt = last_use.connection.prepare_cached(
+            let git_id = self.git_id(conn, &git_checkout.encoded_git_name)?;
+            let mut stmt = conn.prepare_cached(
                 "INSERT INTO git_checkout (git_id, name, timestamp)
                  VALUES (?1, ?2, ?3)
                  ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
@@ -1010,15 +1045,11 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn registry_id(
-        &mut self,
-        last_use: &GlobalLastUse,
-        encoded_registry_name: &str,
-    ) -> CargoResult<i64> {
+    fn registry_id(&mut self, conn: &Connection, encoded_registry_name: &str) -> CargoResult<i64> {
         match self.registry_keys.get(encoded_registry_name) {
             Some(i) => Ok(*i),
             None => {
-                let id = last_use.registry_id_from_name(encoded_registry_name)?;
+                let id = GlobalLastUse::registry_id_from_name(conn, encoded_registry_name)?;
                 self.registry_keys
                     .insert(encoded_registry_name.to_string(), id);
                 Ok(id)
@@ -1026,11 +1057,11 @@ impl DeferredGlobalLastUse {
         }
     }
 
-    fn git_id(&mut self, last_use: &GlobalLastUse, encoded_git_name: &str) -> CargoResult<i64> {
+    fn git_id(&mut self, conn: &Connection, encoded_git_name: &str) -> CargoResult<i64> {
         match self.git_keys.get(encoded_git_name) {
             Some(i) => Ok(*i),
             None => {
-                let id = last_use.connection.query_row(
+                let id = conn.query_row(
                     "SELECT git_id FROM git_db WHERE name = ?",
                     [encoded_git_name],
                     |row| row.get(0),
@@ -1058,4 +1089,23 @@ fn now() -> Timestamp {
         Ok(now) => now.parse().unwrap(),
         Err(_) => to_timestamp(&SystemTime::now()),
     }
+}
+
+/// Returns whether or not the given error should cause a warning to be
+/// displayed to the user.
+///
+/// In some situations, like a read-only global cache, we don't want to spam
+/// the user with a warning. I think once cargo has controllable lints, I
+/// think we should consider changing this to always warn, but give the user
+/// an option to silence the warning.
+pub fn is_silent_error(e: &anyhow::Error) -> bool {
+    if let Some(e) = e.downcast_ref::<rusqlite::Error>() {
+        if matches!(
+            e.sqlite_error_code(),
+            Some(ErrorCode::CannotOpen | ErrorCode::ReadOnly)
+        ) {
+            return true;
+        }
+    }
+    false
 }

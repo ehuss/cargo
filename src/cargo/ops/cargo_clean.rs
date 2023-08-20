@@ -4,6 +4,7 @@ use crate::core::last_use::GlobalLastUse;
 use crate::core::profiles::Profiles;
 use crate::core::{PackageIdSpec, TargetKind, Workspace};
 use crate::ops;
+use crate::util::cache_lock::CacheLockMode;
 use crate::util::edit_distance;
 use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
@@ -92,7 +93,7 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
 
     if config.cli_unstable().gc {
         // TODO: Think about trying to consolidate these 4 lines somehow.
-        let _lock = config.acquire_package_cache_lock()?;
+        let _lock = config.acquire_package_cache_lock(CacheLockMode::MutateExclusive)?;
         let mut last_use = GlobalLastUse::new(&config)?;
         let mut gc = Gc::new(config, &mut last_use)?;
         if no_opts_specified {

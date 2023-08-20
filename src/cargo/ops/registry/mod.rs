@@ -21,6 +21,7 @@ use crate::core::source::Source;
 use crate::core::SourceId;
 use crate::sources::{RegistrySource, SourceConfigMap};
 use crate::util::auth;
+use crate::util::cache_lock::CacheLockMode;
 use crate::util::config::{Config, PathAndArgs};
 use crate::util::errors::CargoResult;
 use crate::util::network::http::http_handle;
@@ -118,7 +119,7 @@ fn registry(
     }
 
     let cfg = {
-        let _lock = config.acquire_package_cache_lock()?;
+        let _lock = config.acquire_package_cache_lock(CacheLockMode::DownloadExclusive)?;
         let mut src = RegistrySource::remote(source_ids.replacement, &HashSet::new(), config)?;
         // Only update the index if `force_update` is set.
         if force_update {

@@ -2,12 +2,17 @@
 
 use super::config::ConfigBuilder;
 use cargo::core::last_use::{self, DeferredGlobalLastUse, GlobalLastUse};
+use cargo::util::cache_lock::CacheLockMode;
 use cargo::Config;
 use cargo_test_support::paths::{self, CargoPathExt};
 use cargo_test_support::registry::{Package, RegistryBuilder};
-use cargo_test_support::{basic_manifest, cargo_process, git, project, Project};
+use cargo_test_support::{
+    basic_manifest, cargo_process, execs, git, project, retry, sleep_ms, thread_wait_timeout,
+    Project,
+};
 use std::fmt::Write;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::{Duration, SystemTime};
 
 /// Helper to get the names of files in a directory as strings.
@@ -60,8 +65,10 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
 
     GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
 
-    let _lock = config.acquire_package_cache_lock().unwrap();
-    let last_use = GlobalLastUse::new(&config).unwrap();
+    let _lock = config
+        .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+        .unwrap();
+    let mut last_use = GlobalLastUse::new(&config).unwrap();
     let mut deferred = DeferredGlobalLastUse::new();
 
     cache_dir.rm_rf();
@@ -99,7 +106,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
     for (name, age, crate_size, src_size) in test_crates {
         create(name, *age, *crate_size, *src_size);
     }
-    deferred.save(&last_use).unwrap();
+    deferred.save(&mut last_use).unwrap();
 
     (cache_dir, src_dir)
 }
@@ -144,9 +151,11 @@ fn implies_source() {
     // Checks that when a src, crate, or checkout is marked as used, the
     // corresponding index or git db also gets marked as used.
     let config = ConfigBuilder::new().unstable_flag("gc").build();
-    let _lock = config.acquire_package_cache_lock().unwrap();
+    let _lock = config
+        .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+        .unwrap();
     let mut deferred = DeferredGlobalLastUse::new();
-    let last_use = GlobalLastUse::new(&config).unwrap();
+    let mut last_use = GlobalLastUse::new(&config).unwrap();
 
     deferred.mark_registry_crate_used(last_use::RegistryCrate {
         encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
@@ -162,7 +171,7 @@ fn implies_source() {
         encoded_git_name: "cargo-e7ff1db891893a9e".to_string(),
         short_name: "f0a4ee0".to_string(),
     });
-    deferred.save(&last_use).unwrap();
+    deferred.save(&mut last_use).unwrap();
 
     let mut indexes = last_use.registry_index_all().unwrap();
     assert_eq!(indexes.len(), 2);
@@ -525,7 +534,9 @@ fn auto_gc_various_commands() {
             .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
             .run();
         let config = ConfigBuilder::new().unstable_flag("gc").build();
-        let lock = config.acquire_package_cache_lock().unwrap();
+        let lock = config
+            .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+            .unwrap();
         let last_use = GlobalLastUse::new(&config).unwrap();
         let indexes = last_use.registry_index_all().unwrap();
         assert_eq!(indexes.len(), 1);
@@ -541,7 +552,9 @@ fn auto_gc_various_commands() {
             .arg("-Zgc")
             .masquerade_as_nightly_cargo(&["gc"])
             .run();
-        let lock = config.acquire_package_cache_lock().unwrap();
+        let lock = config
+            .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+            .unwrap();
         let indexes = last_use.registry_index_all().unwrap();
         assert_eq!(indexes.len(), 0);
         let crates = last_use.registry_crate_all().unwrap();
@@ -602,7 +615,9 @@ fn updates_last_use_various_commands() {
             .masquerade_as_nightly_cargo(&["gc"])
             .run();
         let config = ConfigBuilder::new().unstable_flag("gc").build();
-        let lock = config.acquire_package_cache_lock().unwrap();
+        let lock = config
+            .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+            .unwrap();
         let last_use = GlobalLastUse::new(&config).unwrap();
         let indexes = last_use.registry_index_all().unwrap();
         assert_eq!(indexes.len(), 1);
@@ -646,7 +661,9 @@ fn both_git_and_http_index_cleans() {
         .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
     let config = ConfigBuilder::new().unstable_flag("gc").build();
-    let lock = config.acquire_package_cache_lock().unwrap();
+    let lock = config
+        .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+        .unwrap();
     let last_use = GlobalLastUse::new(&config).unwrap();
     let indexes = last_use.registry_index_all().unwrap();
     assert_eq!(indexes.len(), 2);
@@ -658,7 +675,9 @@ fn both_git_and_http_index_cleans() {
     p.cargo("clean --gc -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .run();
-    let lock = config.acquire_package_cache_lock().unwrap();
+    let lock = config
+        .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+        .unwrap();
     let indexes = last_use.registry_index_all().unwrap();
     assert_eq!(indexes.len(), 0);
     assert_eq!(get_index_names().len(), 0);
@@ -775,7 +794,9 @@ fn tracks_sizes() {
 
     // Check that the crate sizes are the same as on disk.
     let config = ConfigBuilder::new().unstable_flag("gc").build();
-    let _lock = config.acquire_package_cache_lock().unwrap();
+    let _lock = config
+        .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+        .unwrap();
     let last_use = GlobalLastUse::new(&config).unwrap();
     let mut crates = last_use.registry_crate_all().unwrap();
     crates.sort_by(|a, b| a.0.crate_filename.cmp(&b.0.crate_filename));
@@ -926,7 +947,9 @@ fn max_size_untracked_crate() {
         .with_stderr("[REMOVED] 0 files/directories, 0 total bytes")
         .run();
     // Check that it stored the size data.
-    let _lock = config.acquire_package_cache_lock().unwrap();
+    let _lock = config
+        .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+        .unwrap();
     let last_use = GlobalLastUse::new(&config).unwrap();
     let crates = last_use.registry_crate_all().unwrap();
     let mut actual: Vec<_> = crates
@@ -975,7 +998,9 @@ fn max_size_untracked_verify(config: &Config) {
     .collect();
     assert_eq!(actual.len(), 1);
     let actual_size = cargo_util::paths::du(&actual[0]).unwrap();
-    let lock = config.acquire_package_cache_lock().unwrap();
+    let lock = config
+        .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+        .unwrap();
     let last_use = GlobalLastUse::new(&config).unwrap();
     let srcs = last_use.registry_src_all().unwrap();
     assert_eq!(srcs.len(), 1);
@@ -995,7 +1020,9 @@ fn max_size_untracked_src_from_use() {
         .masquerade_as_nightly_cargo(&["gc"])
         .run();
     // Check that it is None.
-    let lock = config.acquire_package_cache_lock().unwrap();
+    let lock = config
+        .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+        .unwrap();
     let last_use = GlobalLastUse::new(&config).unwrap();
     let srcs = last_use.registry_src_all().unwrap();
     assert_eq!(srcs.len(), 1);
@@ -1067,4 +1094,175 @@ fn max_download_size() {
             .with_stderr_unordered(&stderr)
             .run();
     }
+}
+
+#[cargo_test]
+fn package_cache_lock_during_build() {
+    // Verifies that a shared lock is held during a build. Resolution and
+    // downloads should be OK while that is held, but mutation should block.
+    //
+    // This works by launching a build with a build script that will pause.
+    // Then it performs other cargo commands and verifies their behavior.
+    Package::new("bar", "1.0.0").publish();
+    let p_foo = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                bar = "1.0"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file(
+            "build.rs",
+            r#"
+                fn main() {
+                    std::fs::write("blocking", "").unwrap();
+                    let path = std::path::Path::new("ready");
+                    loop {
+                        if path.exists() {
+                            break;
+                        } else {
+                            std::thread::sleep(std::time::Duration::from_millis(100))
+                        }
+                    }
+                }
+            "#,
+        )
+        .build();
+    let p_foo2 = project()
+        .at("foo2")
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo2"
+                version = "0.1.0"
+
+                [dependencies]
+                bar = "1.0"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    // Start a build that will pause once the build starts.
+    let mut foo_child = p_foo
+        .cargo("check -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .build_command()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Wait for it to enter build script.
+    retry(100, || p_foo.root().join("blocking").exists().then_some(()));
+
+    // Start a build with a different target directory. It should not block,
+    // even though it gets a download lock, and then a shared lock.
+    //
+    // Also verify that auto-gc gets disabled.
+    p_foo2
+        .cargo("check -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("CARGO_GC_AUTO_FREQUENCY", "always")
+        .env("CARGO_LOG", "cargo::core::gc=debug")
+        .with_stderr_contains("[UPDATING] `dummy-registry` index")
+        .with_stderr_contains("[CHECKING] bar v1.0.0")
+        .with_stderr_contains("[CHECKING] foo2 v0.1.0 [..]")
+        .with_stderr_contains("[FINISHED] [..]")
+        .with_stderr_contains("[..]unable to acquire mutate lock, auto gc disabled")
+        .run();
+
+    // Ensure that the first build really blocked.
+    assert!(matches!(foo_child.try_wait(), Ok(None)));
+
+    // Cleaning while a command is running should block.
+    let mut clean_cmd = p_foo2
+        .cargo("clean --max-download-size=0 -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .build_command();
+    clean_cmd.stderr(Stdio::piped());
+    let mut clean_child = clean_cmd.spawn().unwrap();
+
+    // Give the clean command a chance to finish (it shouldn't).
+    sleep_ms(500);
+    // They should both still be running.
+    assert!(matches!(foo_child.try_wait(), Ok(None)));
+    assert!(matches!(clean_child.try_wait(), Ok(None)));
+
+    // Let the original build finish.
+    p_foo.change_file("ready", "");
+
+    // Wait for clean to finish.
+    let thread = std::thread::spawn(|| clean_child.wait_with_output().unwrap());
+    let output = thread_wait_timeout(100, thread);
+    assert!(output.status.success());
+    // Validate the output of the clean.
+    execs()
+        .with_stderr(
+            "\
+[BLOCKING] waiting for file lock on package cache mutation
+[REMOVED] [..]
+",
+        )
+        .run_output(&output);
+}
+
+#[cargo_test]
+fn read_only_locking_auto_gc() {
+    // Tests the behavior for auto-gc on a read-only directory.
+    Package::new("bar", "1.0.0").publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                bar = "1.0"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+    // Populate cache.
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .run();
+    let cargo_home = paths::home().join(".cargo");
+    let mut perms = std::fs::metadata(&cargo_home).unwrap().permissions();
+    // Test when it can't update auto-gc db.
+    perms.set_readonly(true);
+    std::fs::set_permissions(&cargo_home, perms.clone()).unwrap();
+    p.cargo("check -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[CHECKING] bar v1.0.0
+[CHECKING] foo v0.1.0 [..]
+[FINISHED] [..]
+",
+        )
+        .run();
+    // Try again without the last-use existing (such as if the cache was
+    // populated by an older version of cargo).
+    perms.set_readonly(false);
+    std::fs::set_permissions(&cargo_home, perms.clone()).unwrap();
+    let config = ConfigBuilder::new().build();
+    GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&cargo_home, perms.clone()).unwrap();
+    p.cargo("check -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr("[FINISHED] [..]")
+        .run();
+    perms.set_readonly(false);
+    std::fs::set_permissions(&cargo_home, perms).unwrap();
 }

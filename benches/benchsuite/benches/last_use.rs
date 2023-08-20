@@ -1,4 +1,5 @@
 use cargo::core::last_use::{self, DeferredGlobalLastUse, GlobalLastUse};
+use cargo::util::cache_lock::CacheLockMode;
 use cargo::util::Config;
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::fs;
@@ -55,7 +56,9 @@ fn initialize_config() -> Config {
 /// existing full database.
 fn global_last_use_init(c: &mut Criterion) {
     let config = initialize_config();
-    let _lock = config.acquire_package_cache_lock().unwrap();
+    let _lock = config
+        .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
+        .unwrap();
     c.bench_function("global_last_use_init", |b| {
         b.iter(|| {
             GlobalLastUse::new(&config).unwrap();
@@ -67,13 +70,15 @@ fn global_last_use_init(c: &mut Criterion) {
 /// updates.
 fn global_last_use_empty_save(c: &mut Criterion) {
     let config = initialize_config();
-    let _lock = config.acquire_package_cache_lock().unwrap();
+    let _lock = config
+        .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
+        .unwrap();
     let mut deferred = DeferredGlobalLastUse::new();
-    let last_use = GlobalLastUse::new(&config).unwrap();
+    let mut last_use = GlobalLastUse::new(&config).unwrap();
 
     c.bench_function("global_last_use_empty_save", |b| {
         b.iter(|| {
-            deferred.save(&last_use).unwrap();
+            deferred.save(&mut last_use).unwrap();
         })
     });
 }
@@ -583,7 +588,9 @@ static RANDOM_SAMPLE: &[&str] = &[
 
 fn global_last_use_update(c: &mut Criterion) {
     let config = initialize_config();
-    let _lock = config.acquire_package_cache_lock().unwrap();
+    let _lock = config
+        .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
+        .unwrap();
     // TODO: try to avoid these three lines somehow
     let homedir = cargo_home();
     let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join(LAST_USE_SAMPLE);
@@ -599,7 +606,7 @@ fn global_last_use_update(c: &mut Criterion) {
 
         fs::copy(&sample, homedir.join(".last-use")).unwrap();
         let mut deferred = DeferredGlobalLastUse::new();
-        let last_use = GlobalLastUse::new(&config).unwrap();
+        let mut last_use = GlobalLastUse::new(&config).unwrap();
         group.bench_with_input(size.to_string(), &size, |b, &size| {
             b.iter(|| {
                 for name in &RANDOM_SAMPLE[..size] {
@@ -614,7 +621,7 @@ fn global_last_use_update(c: &mut Criterion) {
                         size: Some(12345678),
                     });
                 }
-                deferred.save(&last_use).unwrap();
+                deferred.save(&mut last_use).unwrap();
             })
         });
     }

@@ -1,4 +1,5 @@
 use cargo::core::last_use::{self, DeferredGlobalLastUse, GlobalLastUse};
+use cargo::util::cache_lock::CacheLockMode;
 use cargo::Config;
 use std::fs;
 use std::path::Path;
@@ -25,9 +26,11 @@ fn main() {
             &[],
         )
         .unwrap();
-    let _lock = config.acquire_package_cache_lock().unwrap();
+    let _lock = config
+        .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
+        .unwrap();
     let mut deferred = DeferredGlobalLastUse::new();
-    let last_use = GlobalLastUse::new(&config).unwrap();
+    let mut last_use = GlobalLastUse::new(&config).unwrap();
 
     // ~/.cargo/registry/cache/github.com-1ecc6299db9ec823
     let real_home = cargo::util::homedir(&std::env::current_dir().unwrap()).unwrap();
@@ -101,7 +104,7 @@ fn main() {
         }
     }
 
-    deferred.save(&last_use).unwrap();
+    deferred.save(&mut last_use).unwrap();
     fs::rename(&last_use_db, homedir.join("last-use-sample")).unwrap();
     fs::remove_file(homedir.join(".package-cache")).unwrap();
 }

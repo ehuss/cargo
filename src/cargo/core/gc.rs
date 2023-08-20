@@ -11,9 +11,9 @@
 //! Garbage collection is guided by the last-use tracking implemented in the
 //! [`crate::core::last_use`] module.
 
-use crate::core::last_use::GlobalLastUse;
+use crate::core::last_use::{self, GlobalLastUse};
 use crate::ops::CleanContext;
-use crate::util::config::PackageCacheLock;
+use crate::util::cache_lock::{CacheLock, CacheLockMode};
 use crate::{CargoResult, Config};
 use anyhow::format_err;
 use anyhow::{bail, Context};
@@ -27,9 +27,10 @@ pub struct Gc<'a, 'config> {
     /// A lock on the package cache.
     ///
     /// This is important to be held, since we don't want multiple cargos to
-    /// be allowed to write to the cache at the same time.
+    /// be allowed to write to the cache at the same time, or for others to
+    /// read while we are modifying the cache.
     #[allow(dead_code)] // Held for drop.
-    lock: PackageCacheLock<'config>,
+    lock: CacheLock<'config>,
 }
 
 /// Automatic garbage collection settings from the `gc.auto` config table.
@@ -220,7 +221,7 @@ impl<'a, 'config> Gc<'a, 'config> {
         config: &'config Config,
         global_last_use: &'a mut GlobalLastUse,
     ) -> CargoResult<Gc<'a, 'config>> {
-        let lock = config.acquire_package_cache_lock()?;
+        let lock = config.acquire_package_cache_lock(CacheLockMode::MutateExclusive)?;
         Ok(Gc {
             config,
             global_last_use,
@@ -408,16 +409,26 @@ pub fn auto_gc(config: &Config) {
     }
 
     if let Err(e) = auto_gc_inner(config) {
-        crate::display_warning_with_error(
-            "failed to auto-clean cache data",
-            &e,
-            &mut config.shell(),
-        );
+        if last_use::is_silent_error(&e) {
+            tracing::warn!("failed to auto-clean cache data: {e:?}");
+        } else {
+            crate::display_warning_with_error(
+                "failed to auto-clean cache data",
+                &e,
+                &mut config.shell(),
+            );
+        }
     }
 }
 
 fn auto_gc_inner(config: &Config) -> CargoResult<()> {
-    let _lock = config.acquire_package_cache_lock()?;
+    let _lock = match config.try_acquire_package_cache_lock(CacheLockMode::MutateExclusive)? {
+        Some(lock) => lock,
+        None => {
+            tracing::debug!("unable to acquire mutate lock, auto gc disabled");
+            return Ok(());
+        }
+    };
     // This should not be called when there are pending deferred entries.
     let deferred = config.deferred_global_last_use()?;
     debug_assert!(deferred.is_empty());
