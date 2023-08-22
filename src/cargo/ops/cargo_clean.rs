@@ -8,7 +8,7 @@ use crate::util::cache_lock::CacheLockMode;
 use crate::util::edit_distance;
 use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
-use crate::util::{Config, Progress, ProgressStyle};
+use crate::util::{human_readable_bytes, Config, Progress, ProgressStyle};
 
 use cargo_util::paths;
 use std::fs;
@@ -394,8 +394,6 @@ impl<'cfg> CleanContext<'cfg> {
                     .shell()
                     .verbose(|shell| Ok(writeln!(shell.out(), "{}", entry.path().display())?))?;
             }
-            // TODO: Fix these context calls to more closely match cargo_util::remove_dir_all
-            // OR, change remove_dir_all to give a callback.
             if entry.file_type().is_dir() {
                 // The contents should have been removed by now, but sometimes a race condition is hit
                 // where other files have been added by the OS. `paths::remove_dir_all` also falls back
@@ -405,7 +403,6 @@ impl<'cfg> CleanContext<'cfg> {
                     paths::remove_dir_all(entry.path())?;
                 }
             } else {
-                // TODO: Perf test this.
                 rm_file(entry.path(), entry.metadata())?;
             }
         }
@@ -415,12 +412,21 @@ impl<'cfg> CleanContext<'cfg> {
 
     fn display_summary(&self) -> CargoResult<()> {
         let status = if self.dry_run { "Summary" } else { "Removed" };
-        // TODO: Human-readable bytes
+        let byte_count = if self.total_bytes_removed == 0 {
+            String::new()
+        } else {
+            let (bytes, unit) = human_readable_bytes(self.total_bytes_removed);
+            if bytes < 1024.0 {
+                format!(", {bytes}{unit} total")
+            } else {
+                format!(", {bytes:.1}{unit} total")
+            }
+        };
         self.config.shell().status(
             status,
             format!(
-                "{} files/directories, {} total bytes",
-                self.num_files_folders_cleaned, self.total_bytes_removed
+                "{} files/directories{byte_count}",
+                self.num_files_folders_cleaned
             ),
         )
     }

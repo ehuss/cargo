@@ -716,14 +716,14 @@ fn clean_gc_dry_run() {
     p.cargo("clean --gc --dry-run -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .with_stdout_unordered(expected_files)
-        .with_stderr("[SUMMARY] [..] files/directories, [..] total bytes")
+        .with_stderr("[SUMMARY] [..] files/directories, [..] total")
         .run();
 
     // Again, make sure the information is still tracked.
     p.cargo("clean --gc --dry-run -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .with_stdout_unordered(expected_files)
-        .with_stderr("[SUMMARY] [..] files/directories, [..] total bytes")
+        .with_stderr("[SUMMARY] [..] files/directories, [..] total")
         .run();
 }
 
@@ -757,7 +757,7 @@ fn clean_default_gc() {
 [REMOVING] [ROOT]/home/.cargo/registry/src/[..]/bar-1.0.0
 [REMOVING] [ROOT]/home/.cargo/registry/cache/[..]/bar-1.0.0.crate
 [REMOVING] [ROOT]/home/.cargo/registry/index/[..]
-[REMOVED] [..] files/directories, [..] total bytes
+[REMOVED] [..] files/directories, [..] total
 ",
         )
         .run();
@@ -882,11 +882,12 @@ fn max_size() {
         for name in removed {
             writeln!(stderr, "[REMOVING] [..]{name}.crate").unwrap();
         }
-        write!(
-            stderr,
-            "[REMOVED] {files} files/directories, {bytes} total bytes"
-        )
-        .unwrap();
+        let total_display = if removed.is_empty() {
+            String::new()
+        } else {
+            format!(", {bytes}B total")
+        };
+        write!(stderr, "[REMOVED] {files} files/directories{total_display}").unwrap();
         cargo_process(&format!("clean -Zgc -v --max-crate-size={clean_size}"))
             .masquerade_as_nightly_cargo(&["gc"])
             .with_stderr_unordered(&stderr)
@@ -905,11 +906,12 @@ fn max_size() {
             writeln!(stderr, "[REMOVING] [..]{name}").unwrap();
         }
         let total = files * 2; // dir + file
-        write!(
-            stderr,
-            "[REMOVED] {total} files/directories, {bytes} total bytes"
-        )
-        .unwrap();
+        let total_display = if total == 0 {
+            String::new()
+        } else {
+            format!(", {bytes}B total")
+        };
+        write!(stderr, "[REMOVED] {total} files/directories{total_display}").unwrap();
         cargo_process(&format!("clean -Zgc -v --max-src-size={clean_size}"))
             .masquerade_as_nightly_cargo(&["gc"])
             .with_stderr_unordered(&stderr)
@@ -944,7 +946,7 @@ fn max_size_untracked_crate() {
     // This should scan the directory and populate the db with the size information.
     cargo_process("clean -Zgc -v --max-crate-size=100000")
         .masquerade_as_nightly_cargo(&["gc"])
-        .with_stderr("[REMOVED] 0 files/directories, 0 total bytes")
+        .with_stderr("[REMOVED] 0 files/directories")
         .run();
     // Check that it stored the size data.
     let _lock = config
@@ -1032,7 +1034,7 @@ fn max_size_untracked_src_from_use() {
     // Fix the size.
     p.cargo("clean -v --max-src-size=10000 -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .with_stderr("[REMOVED] 0 files/directories, 0 total bytes")
+        .with_stderr("[REMOVED] 0 files/directories")
         .run();
     max_size_untracked_verify(&config);
 }
@@ -1047,7 +1049,7 @@ fn max_size_untracked_src_from_clean() {
     // Clean should scan the src and update the db.
     p.cargo("clean -v --max-src-size=10000 -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
-        .with_stderr("[REMOVED] 0 files/directories, 0 total bytes")
+        .with_stderr("[REMOVED] 0 files/directories")
         .run();
     max_size_untracked_verify(&config);
 }
@@ -1084,9 +1086,14 @@ fn max_download_size() {
         for name in removed {
             writeln!(stderr, "[REMOVING] [..]{name}").unwrap();
         }
+        let total_display = if removed.is_empty() {
+            String::new()
+        } else {
+            format!(", {bytes}B total")
+        };
         write!(
             stderr,
-            "[REMOVED] {files_deleted} files/directories, {bytes} total bytes",
+            "[REMOVED] {files_deleted} files/directories{total_display}",
         )
         .unwrap();
         cargo_process(&format!("clean -Zgc -v --max-download-size={max_size}"))
