@@ -12,6 +12,7 @@
 //! [`crate::core::last_use`] module.
 
 use crate::core::last_use::{self, GlobalLastUse};
+use crate::core::Verbosity;
 use crate::ops::CleanContext;
 use crate::util::cache_lock::{CacheLock, CacheLockMode};
 use crate::{CargoResult, Config};
@@ -409,7 +410,7 @@ pub fn auto_gc(config: &Config) {
     }
 
     if let Err(e) = auto_gc_inner(config) {
-        if last_use::is_silent_error(&e) {
+        if last_use::is_silent_error(&e) && config.shell().verbosity() != Verbosity::Verbose {
             tracing::warn!("failed to auto-clean cache data: {e:?}");
         } else {
             crate::display_warning_with_error(

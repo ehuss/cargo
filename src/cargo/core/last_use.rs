@@ -2,6 +2,7 @@
 //! up those files if they haven't been used in a while.
 
 use crate::core::gc::GcOpts;
+use crate::core::Verbosity;
 use crate::ops::{CleanContext, CleaningFolderBar};
 use crate::util::cache_lock::CacheLockMode;
 use crate::util::Filesystem;
@@ -897,16 +898,18 @@ impl DeferredGlobalLastUse {
     /// This will log or display a warning to the user.
     pub fn save_no_error(&mut self, config: &Config) {
         if let Err(e) = self.save_with_config(config) {
-            // Because there is an assertion in auto-gc that this is empty,
-            // be sure to clear it so that assertion doesn't fail.
+            // Because there is an assertion in auto-gc that checks if this is
+            // empty, be sure to clear it so that assertion doesn't fail.
             self.clear();
-            // TODO: Consider if this should be a hard error?
             if !self.save_err_has_warned {
-                if is_silent_error(&e) {
+                if is_silent_error(&e) && config.shell().verbosity() != Verbosity::Verbose {
                     tracing::warn!("failed to save last-use data: {e:?}");
                 } else {
                     crate::display_warning_with_error(
-                        "failed to save last-use data",
+                        "failed to save last-use data\n\
+                        This may prevent cargo from accurately tracking what is being \
+                        used in its global cache. This information is used for \
+                        automatically removing unused data in the cache.",
                         &e,
                         &mut config.shell(),
                     );
