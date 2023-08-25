@@ -433,26 +433,30 @@ impl GlobalLastUse {
             + size_src_paths.len();
         let progress = CleaningFolderBar::new(config, total);
         clean_ctx.set_progress(Box::new(progress));
-        let base_path = config.registry_source_path().into_path_unlocked();
+        let base_src_path = config.registry_source_path().into_path_unlocked();
         // TODO: rm_rf context
         for path in src_paths.iter().chain(size_src_paths.iter()) {
-            clean_ctx.rm_rf(&base_path.join(path))?;
+            clean_ctx.rm_rf(&base_src_path.join(path))?;
         }
-        let base_path = config.registry_cache_path().into_path_unlocked();
+        let base_crate_path = config.registry_cache_path().into_path_unlocked();
         for path in crate_paths.iter().chain(size_crate_paths.iter()) {
-            clean_ctx.rm_rf(&base_path.join(path))?;
+            clean_ctx.rm_rf(&base_crate_path.join(path))?;
         }
-        let base_path = config.registry_index_path().into_path_unlocked();
+        let base_index_path = config.registry_index_path().into_path_unlocked();
         for path in index_paths {
-            clean_ctx.rm_rf(&base_path.join(path))?;
+            clean_ctx.rm_rf(&base_index_path.join(&path))?;
+            // Also delete .crate and src directories, since by definition
+            // they cannot be used without their index.
+            clean_ctx.rm_rf(&base_src_path.join(&path))?;
+            clean_ctx.rm_rf(&base_crate_path.join(&path))?;
         }
-        let base_path = config.git_path().into_path_unlocked().join("checkouts");
+        let base_git_co_path = config.git_path().into_path_unlocked().join("checkouts");
         for path in git_co_paths {
-            clean_ctx.rm_rf(&base_path.join(path))?;
+            clean_ctx.rm_rf(&base_git_co_path.join(path))?;
         }
-        let base_path = config.git_path().into_path_unlocked().join("db");
+        let base_git_db_path = config.git_path().into_path_unlocked().join("db");
         for path in git_db_paths {
-            clean_ctx.rm_rf(&base_path.join(path))?;
+            clean_ctx.rm_rf(&base_git_db_path.join(path))?;
         }
 
         if clean_ctx.dry_run {
@@ -553,6 +557,7 @@ impl GlobalLastUse {
         Self::populate_untracked_src(conn, config)?;
         debug!("cleaning download till under {max_size:?}");
 
+        // TODO: Describe this query. The 1/2 thing, and why it is a single query.
         let mut stmt = conn.prepare_cached(
             "SELECT 1, registry_src.rowid, registry_src.name AS name, registry_index.name,
                     registry_src.size, registry_src.timestamp AS timestamp
@@ -628,6 +633,9 @@ impl GlobalLastUse {
         Ok(names)
     }
 
+    /// Updates the database to track any `.crate` files that are currently
+    /// not tracked (such as when they are downloaded by an older version of
+    /// cargo).
     fn populate_untracked_crate(conn: &Connection, config: &Config) -> CargoResult<()> {
         debug!("populating untracked crate files");
         let base_path = config.registry_cache_path().into_path_unlocked();
@@ -654,12 +662,16 @@ impl GlobalLastUse {
         Ok(())
     }
 
+    /// Updates the database to track any `src` directories that are currently
+    /// not tracked (such as when they are downloaded by an older version of
+    /// cargo).
     fn populate_untracked_src(conn: &Connection, config: &Config) -> CargoResult<()> {
         debug!("populating untracked src files");
         let base_path = config.registry_source_path().into_path_unlocked();
         let index_names = Self::names_from(&base_path)?;
         Self::populate_untracked_registry_index_in_path(conn, &index_names)?;
 
+        // TODO: Is this select necessary?
         let mut select_stmt = conn.prepare_cached(
             "SELECT 1 FROM registry_src
              WHERE registry_id=?1 AND name=?2",

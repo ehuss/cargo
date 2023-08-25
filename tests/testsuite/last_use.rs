@@ -712,6 +712,8 @@ fn clean_gc_dry_run() {
         [..]/.cargo/registry/src/[..]/bar-1.0.0\n\
         [..]/.cargo/registry/cache/[..]/bar-1.0.0.crate\n\
         [..]/.cargo/registry/index/[..]\n\
+        [..]/.cargo/registry/src/[..]\n\
+        [..]/.cargo/registry/cache/[..]\n\
     ";
     p.cargo("clean --gc --dry-run -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
@@ -757,6 +759,8 @@ fn clean_default_gc() {
 [REMOVING] [ROOT]/home/.cargo/registry/src/[..]/bar-1.0.0
 [REMOVING] [ROOT]/home/.cargo/registry/cache/[..]/bar-1.0.0.crate
 [REMOVING] [ROOT]/home/.cargo/registry/index/[..]
+[REMOVING] [ROOT]/home/.cargo/registry/src/[..]
+[REMOVING] [ROOT]/home/.cargo/registry/cache/[..]
 [REMOVED] [..] files/directories, [..] total
 ",
         )
@@ -1272,4 +1276,41 @@ fn read_only_locking_auto_gc() {
         .run();
     perms.set_readonly(false);
     std::fs::set_permissions(&cargo_home, perms).unwrap();
+}
+
+#[cargo_test]
+fn delete_index_also_deletes_crates() {
+    // Checks that when an index is delete that src and cache directories also get deleted.
+    Package::new("bar", "1.0.0").publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                bar = "1.0"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
+        .run();
+
+    assert_eq!(get_registry_names("src"), ["bar-1.0.0"]);
+    assert_eq!(get_registry_names("cache"), ["bar-1.0.0.crate"]);
+
+    p.cargo("clean")
+        .arg("--max-index-age=0 days")
+        .arg("-Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr("[REMOVED] [..]")
+        .run();
+
+    assert_eq!(get_registry_names("src").len(), 0);
+    assert_eq!(get_registry_names("cache").len(), 0);
 }
