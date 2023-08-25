@@ -1,5 +1,7 @@
 //! Support for tracking the last time files were used to assist with cleaning
 //! up those files if they haven't been used in a while.
+//!
+//! TODO: Give an introduction on how everything works.
 
 use crate::core::gc::GcOpts;
 use crate::core::Verbosity;
@@ -503,8 +505,8 @@ impl GlobalLastUse {
         table_name: &str,
     ) -> CargoResult<Vec<PathBuf>> {
         match table_name {
-            "registry_crate" => Self::populate_untracked_crate(conn, config)?,
-            "registry_src" => Self::populate_untracked_src(conn, config)?,
+            "registry_crate" => Self::sync_crate_db_with_files(conn, config)?,
+            "registry_src" => Self::sync_src_db_with_files(conn, config)?,
             _ => panic!("unexpected table {table_name}"),
         }
         debug!("cleaning {table_name} till under {max_size:?}");
@@ -553,8 +555,8 @@ impl GlobalLastUse {
         config: &Config,
         max_size: u64,
     ) -> CargoResult<(Vec<PathBuf>, Vec<PathBuf>)> {
-        Self::populate_untracked_crate(conn, config)?;
-        Self::populate_untracked_src(conn, config)?;
+        Self::sync_crate_db_with_files(conn, config)?;
+        Self::sync_src_db_with_files(conn, config)?;
         debug!("cleaning download till under {max_size:?}");
 
         // TODO: Describe this query. The 1/2 thing, and why it is a single query.
@@ -589,6 +591,7 @@ impl GlobalLastUse {
             })?
             .collect::<Result<Vec<(i64, i64, String, String, u64)>, _>>()?;
         let mut total_size: u64 = rows.iter().map(|r| r.4).sum();
+        debug!("total download cache size appears to be {total_size}");
         let mut src_result = Vec::new();
         let mut crate_result = Vec::new();
         for (table, rowid, name, index_name, size) in rows {
@@ -607,6 +610,7 @@ impl GlobalLastUse {
         Ok((src_result, crate_result))
     }
 
+    /// Looks for index caches that aren't currently in the database and adds them.
     fn populate_untracked_registry_index_in_path(
         conn: &Connection,
         names: &[String],
@@ -631,6 +635,48 @@ impl GlobalLastUse {
             .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
             .collect();
         Ok(names)
+    }
+
+    /// Updates the database to match which `.crate` files actually exist.
+    fn sync_crate_db_with_files(conn: &Connection, config: &Config) -> CargoResult<()> {
+        let base_path = config.registry_cache_path().into_path_unlocked();
+        Self::update_db_for_removed(conn, "registry_crate", &base_path)?;
+        Self::populate_untracked_crate(conn, config)?;
+        Ok(())
+    }
+
+    /// Updates the database to match which `src` files actually exist, and
+    /// updates any untracked sizes.
+    fn sync_src_db_with_files(conn: &Connection, config: &Config) -> CargoResult<()> {
+        let base_path = config.registry_source_path().into_path_unlocked();
+        Self::update_db_for_removed(conn, "registry_src", &base_path)?;
+        Self::populate_untracked_src(conn, config)?;
+        Ok(())
+    }
+
+    /// Removes database entries for any files that are not on disk.
+    fn update_db_for_removed(
+        conn: &Connection,
+        table_name: &str,
+        base_path: &Path,
+    ) -> CargoResult<()> {
+        let mut select_stmt = conn.prepare_cached(&format!(
+            "SELECT {table_name}.rowid, registry_index.name, {table_name}.name
+             FROM registry_index, {table_name}
+             WHERE {table_name}.registry_id = registry_index.id",
+        ))?;
+        let mut delete_stmt =
+            conn.prepare_cached(&format!("DELETE FROM {table_name} WHERE rowid = ?1"))?;
+        let mut rows = select_stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let rowid: i64 = row.get_unwrap(0);
+            let registry_index_name: String = row.get_unwrap(1);
+            let name: String = row.get_unwrap(2);
+            if !base_path.join(registry_index_name).join(name).exists() {
+                delete_stmt.execute([rowid])?;
+            }
+        }
+        Ok(())
     }
 
     /// Updates the database to track any `.crate` files that are currently
@@ -674,7 +720,7 @@ impl GlobalLastUse {
         // TODO: Is this select necessary?
         let mut select_stmt = conn.prepare_cached(
             "SELECT 1 FROM registry_src
-             WHERE registry_id=?1 AND name=?2",
+             WHERE registry_id = ?1 AND name = ?2",
         )?;
         let mut insert_stmt = conn.prepare_cached(
             "INSERT INTO registry_src (registry_id, name, size, timestamp)
@@ -706,7 +752,8 @@ impl GlobalLastUse {
              WHERE registry_src.size IS NULL AND registry_src.registry_id = registry_index.id",
         )?;
         let mut update_stmt =
-            conn.prepare_cached("UPDATE registry_src SET size=?1 WHERE rowid=?2")?;
+            conn.prepare_cached("UPDATE registry_src SET size = ?1 WHERE rowid = ?2")?;
+        // TODO: Don't use query_map, use query() and while let Some(row) = rows.next()?
         let rows = null_stmt.query_map([], |row| {
             Ok((row.get_unwrap(0), row.get_unwrap(1), row.get_unwrap(2)))
         })?;

@@ -185,6 +185,7 @@ unicode-width.workspace = true
 unicode-xid.workspace = true
 url.workspace = true
 walkdir.workspace = true
+regex = "1.9.3"
 
 [target.'cfg(not(windows))'.dependencies]
 openssl = { workspace = true, optional = true }

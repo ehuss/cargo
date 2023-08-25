@@ -344,6 +344,11 @@ fn maybe_parse_time_span(span: &str) -> Option<Duration> {
     let Some((left, right)) = span.split_once(' ') else {
         return None;
     };
+    // This isn't strictly necessary, but it does help prevent `+` prefix
+    // which I would rather not include.
+    if !left.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
     let count: u64 = left.parse().ok()?;
     let factor = match right {
         "second" | "seconds" => 1,
@@ -368,28 +373,35 @@ pub fn parse_time_span(span: &str) -> CargoResult<Duration> {
 }
 
 /// Parses a file size using metric or IEC units.
-pub fn parse_human_size(size: &str) -> CargoResult<u64> {
-    let size = size.replace(' ', "");
-    match size.split_once(|c: char| !c.is_ascii_digit() && c != '.') {
-        Some((left, right)) => {
-            let factor = match right.to_lowercase().as_str() {
-                "b" => 1.0,
-                "kb" => 1000.0,
-                "mb" => 1000000.0,
-                "gb" => 1000000000.0,
-                "kib" => 1024.0,
-                "mib" => 1024.0 * 1024.0,
-                "gib" => 1024.0 * 1024.0 * 1024.0,
-                _ => {
-                    bail!("unknown size suffix `{right}`, expected B, kB, MB, GB, kiB, MiB, or GiB")
-                }
-            };
-            left.parse::<f64>()
-                .with_context(|| "expected an integer or float")
-                .map(|size| (size * factor) as u64)
+pub fn parse_human_size(input: &str) -> CargoResult<u64> {
+    let re = regex::Regex::new(r"(?i)^([0-9]+(\.[0-9])?) ?(b|kb|mb|gb|kib|mib|gib)?$").unwrap();
+    let cap = re.captures(input).ok_or_else(|| {
+        format_err!(
+            "invalid size `{input}`, \
+             expected a number with an optional B, kB, MB, GB, kiB, MiB, or GiB suffix"
+        )
+    })?;
+    let factor = match cap.get(3) {
+        Some(suffix) => match suffix.as_str().to_lowercase().as_str() {
+            "b" => 1.0,
+            "kb" => 1_000.0,
+            "mb" => 1_000_000.0,
+            "gb" => 1_000_000_000.0,
+            "kib" => 1024.0,
+            "mib" => 1024.0 * 1024.0,
+            "gib" => 1024.0 * 1024.0 * 1024.0,
+            s => panic!("suffix `{s}` out of sync with regex"),
+        },
+        None => {
+            return cap[1]
+                .parse()
+                .with_context(|| format!("expected an integer size, got `{}`", &cap[1]))
         }
-        None => size.parse().with_context(|| "expected an integer size"),
-    }
+    };
+    let num = cap[1]
+        .parse::<f64>()
+        .with_context(|| format!("expected an integer or float, found `{}`", &cap[1]))?;
+    Ok((num * factor) as u64)
 }
 
 /// Performs automatic garbage collection.
@@ -463,6 +475,7 @@ mod tests {
     fn time_span_errors() {
         assert_eq!(maybe_parse_time_span(""), None);
         assert_eq!(maybe_parse_time_span("1"), None);
+        assert_eq!(maybe_parse_time_span("+2 seconds"), None);
         assert_eq!(maybe_parse_time_span("day"), None);
         assert_eq!(maybe_parse_time_span("-1 days"), None);
         assert_eq!(maybe_parse_time_span("1.5 days"), None);
@@ -486,5 +499,30 @@ mod tests {
              expected a value of \"always\", \"never\", or \"N seconds/minutes/days/weeks/months\", \
              got: \"abc\""
         );
+    }
+
+    #[test]
+    fn human_sizes() {
+        assert_eq!(parse_human_size("0").unwrap(), 0);
+        assert_eq!(parse_human_size("123").unwrap(), 123);
+        assert_eq!(parse_human_size("123b").unwrap(), 123);
+        assert_eq!(parse_human_size("123B").unwrap(), 123);
+        assert_eq!(parse_human_size("123 b").unwrap(), 123);
+        assert_eq!(parse_human_size("123 B").unwrap(), 123);
+        assert_eq!(parse_human_size("1kb").unwrap(), 1_000);
+        assert_eq!(parse_human_size("5kb").unwrap(), 5_000);
+        assert_eq!(parse_human_size("1mb").unwrap(), 1_000_000);
+        assert_eq!(parse_human_size("1gb").unwrap(), 1_000_000_000);
+        assert_eq!(parse_human_size("1kib").unwrap(), 1_024);
+        assert_eq!(parse_human_size("1mib").unwrap(), 1_048_576);
+        assert_eq!(parse_human_size("1gib").unwrap(), 1_073_741_824);
+        assert_eq!(parse_human_size("1.5kb").unwrap(), 1_500);
+
+        assert!(parse_human_size("").is_err());
+        assert!(parse_human_size("x").is_err());
+        assert!(parse_human_size("1x").is_err());
+        assert!(parse_human_size("1 2").is_err());
+        assert!(parse_human_size("1.5").is_err());
+        assert!(parse_human_size("+1").is_err());
     }
 }

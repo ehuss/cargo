@@ -60,8 +60,8 @@ fn months_ago_unix(n: u64) -> String {
 
 /// Populates last-use database and the cache files.
 fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (PathBuf, PathBuf) {
-    let cache_dir = paths::home().join(".cargo/registry/cache/github.com-1ecc6299db9ec823");
-    let src_dir = paths::home().join(".cargo/registry/src/github.com-1ecc6299db9ec823");
+    let cache_dir = paths::home().join(".cargo/registry/cache/example.com-a6c4a5adcb232b9a");
+    let src_dir = paths::home().join(".cargo/registry/src/example.com-a6c4a5adcb232b9a");
 
     GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
 
@@ -79,7 +79,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
         let crate_filename = format!("{name}.crate");
         deferred.mark_registry_crate_used_stamp(
             last_use::RegistryCrate {
-                encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
+                encoded_registry_name: "example.com-a6c4a5adcb232b9a".to_string(),
                 crate_filename: crate_filename.clone(),
                 size: crate_size,
             },
@@ -87,7 +87,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
         );
         deferred.mark_registry_src_used_stamp(
             last_use::RegistrySrc {
-                encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
+                encoded_registry_name: "example.com-a6c4a5adcb232b9a".to_string(),
                 package_dir: name.to_string(),
                 size: Some(src_size),
             },
@@ -158,7 +158,7 @@ fn implies_source() {
     let mut last_use = GlobalLastUse::new(&config).unwrap();
 
     deferred.mark_registry_crate_used(last_use::RegistryCrate {
-        encoded_registry_name: "github.com-1ecc6299db9ec823".to_string(),
+        encoded_registry_name: "example.com-a6c4a5adcb232b9a".to_string(),
         crate_filename: "regex-1.8.4.crate".to_string(),
         size: 123,
     });
@@ -178,7 +178,7 @@ fn implies_source() {
     indexes.sort_by(|a, b| a.0.encoded_registry_name.cmp(&b.0.encoded_registry_name));
     assert_eq!(
         indexes[0].0.encoded_registry_name,
-        "github.com-1ecc6299db9ec823"
+        "example.com-a6c4a5adcb232b9a"
     );
     assert_eq!(
         indexes[1].0.encoded_registry_name,
@@ -935,7 +935,7 @@ fn max_size_untracked_crate() {
     // track sizes, `clean --max-crate-size` should populate the db with the
     // sizes.
     let config = ConfigBuilder::new().unstable_flag("gc").build();
-    let cache = paths::home().join(".cargo/registry/cache/github.com-1ecc6299db9ec823");
+    let cache = paths::home().join(".cargo/registry/cache/example.com-a6c4a5adcb232b9a");
     cache.mkdir_p();
     // Create the `.crate files.
     let test_crates = [
@@ -1313,4 +1313,66 @@ fn delete_index_also_deletes_crates() {
 
     assert_eq!(get_registry_names("src").len(), 0);
     assert_eq!(get_registry_names("cache").len(), 0);
+}
+
+#[cargo_test]
+fn clean_syncs_missing_files() {
+    // When files go missing in the cache, clean operations that need to track
+    // the size should also remove them from the database.
+    Package::new("bar", "1.0.0").publish();
+    Package::new("baz", "1.0.0").publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                bar = "1.0"
+                baz = "1.0"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .run();
+
+    // Verify things are tracked.
+    let config = ConfigBuilder::new().unstable_flag("gc").build();
+    let lock = config
+        .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
+        .unwrap();
+    let last_use = GlobalLastUse::new(&config).unwrap();
+    let crates = last_use.registry_crate_all().unwrap();
+    assert_eq!(crates.len(), 2);
+    let srcs = last_use.registry_src_all().unwrap();
+    assert_eq!(srcs.len(), 2);
+    drop(lock);
+
+    // Remove the files.
+    for pattern in [
+        ".cargo/registry/cache/*/bar-1.0.0.crate",
+        ".cargo/registry/src/*/bar-1.0.0",
+    ] {
+        p.glob(paths::home().join(pattern))
+            .map(|p| p.unwrap())
+            .next()
+            .unwrap()
+            .rm_rf();
+    }
+
+    // Clean should update the db.
+    p.cargo("clean -v --max-download-size=1GB -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr("[REMOVED] 0 files/directories")
+        .run();
+
+    // Verify
+    let crates = last_use.registry_crate_all().unwrap();
+    assert_eq!(crates.len(), 1);
+    let srcs = last_use.registry_src_all().unwrap();
+    assert_eq!(srcs.len(), 1);
 }
