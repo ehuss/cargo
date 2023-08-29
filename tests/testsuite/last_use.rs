@@ -15,6 +15,26 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{Duration, SystemTime};
 
+/// Helper to create a simple `foo` project which depends on a registry
+/// dependency called `bar`.
+fn basic_foo_bar_project() -> Project {
+    Package::new("bar", "1.0.0").publish();
+    project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                bar = "1.0"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build()
+}
+
 /// Helper to get the names of files in a directory as strings.
 fn get_names(glob: &str) -> Vec<String> {
     let mut names: Vec<_> = glob::glob(paths::home().join(glob).to_str().unwrap())
@@ -114,21 +134,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
 #[cargo_test]
 fn gated() {
     // Requires -Zgc to both track last-use data and to run auto-gc.
-    Package::new("bar", "1.0.0").publish();
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-
-                [dependencies]
-                bar = "1.0"
-            "#,
-        )
-        .file("src/lib.rs", "")
-        .build();
+    let p = basic_foo_bar_project();
     p.cargo("check")
         .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
@@ -329,28 +335,14 @@ fn auto_gc_config() {
 #[cargo_test]
 fn frequency() {
     // gc.auto.frequency settings
-    Package::new("bar", "1.0.0").publish();
-    let p = project()
-        .file(
-            ".cargo/config.toml",
-            r#"
+    let p = basic_foo_bar_project();
+    p.change_file(
+        ".cargo/config.toml",
+        r#"
                 [gc.auto]
                 frequency = "never"
             "#,
-        )
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-
-                [dependencies]
-                bar = "1.0"
-            "#,
-        )
-        .file("src/lib.rs", "")
-        .build();
+    );
     // Populate data in the past.
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
@@ -383,21 +375,7 @@ fn frequency() {
 #[cargo_test]
 fn auto_gc_index() {
     // Deletes the index if it hasn't been used in a while.
-    Package::new("bar", "1.0.0").publish();
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-
-                [dependencies]
-                bar = "1.0"
-            "#,
-        )
-        .file("src/lib.rs", "")
-        .build();
+    let p = basic_foo_bar_project();
     p.cargo("check -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
@@ -687,21 +665,7 @@ fn both_git_and_http_index_cleans() {
 #[cargo_test]
 fn clean_gc_dry_run() {
     // Basic `clean --gc --dry-run` test.
-    Package::new("bar", "1.0.0").publish();
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-
-                [dependencies]
-                bar = "1.0"
-            "#,
-        )
-        .file("src/lib.rs", "")
-        .build();
+    let p = basic_foo_bar_project();
     // Populate the last-use data.
     p.cargo("fetch -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
@@ -732,21 +696,7 @@ fn clean_gc_dry_run() {
 #[cargo_test]
 fn clean_default_gc() {
     // `clean` without options should also gc
-    Package::new("bar", "1.0.0").publish();
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-
-                [dependencies]
-                bar = "1.0"
-            "#,
-        )
-        .file("src/lib.rs", "")
-        .build();
+    let p = basic_foo_bar_project();
     // Populate the last-use data.
     p.cargo("fetch -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
@@ -969,21 +919,7 @@ fn max_size_untracked_crate() {
 /// Helper to prepare the max-size test.
 fn max_size_untracked_prepare() -> (Config, Project) {
     // First, publish and download a dependency.
-    Package::new("bar", "1.0.0").publish();
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-
-                [dependencies]
-                bar = "1.0"
-            "#,
-        )
-        .file("src/lib.rs", "")
-        .build();
+    let p = basic_foo_bar_project();
     p.cargo("fetch").run();
     // Pretend it was an older version that did not track last-use.
     let config = ConfigBuilder::new().unstable_flag("gc").build();
@@ -1228,21 +1164,7 @@ fn package_cache_lock_during_build() {
 #[cargo_test]
 fn read_only_locking_auto_gc() {
     // Tests the behavior for auto-gc on a read-only directory.
-    Package::new("bar", "1.0.0").publish();
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-
-                [dependencies]
-                bar = "1.0"
-            "#,
-        )
-        .file("src/lib.rs", "")
-        .build();
+    let p = basic_foo_bar_project();
     // Populate cache.
     p.cargo("fetch -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
@@ -1281,21 +1203,7 @@ fn read_only_locking_auto_gc() {
 #[cargo_test]
 fn delete_index_also_deletes_crates() {
     // Checks that when an index is delete that src and cache directories also get deleted.
-    Package::new("bar", "1.0.0").publish();
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-
-                [dependencies]
-                bar = "1.0"
-            "#,
-        )
-        .file("src/lib.rs", "")
-        .build();
+    let p = basic_foo_bar_project();
     p.cargo("fetch -Zgc")
         .masquerade_as_nightly_cargo(&["gc"])
         .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
@@ -1375,4 +1283,30 @@ fn clean_syncs_missing_files() {
     assert_eq!(crates.len(), 1);
     let srcs = last_use.registry_src_all().unwrap();
     assert_eq!(srcs.len(), 1);
+}
+
+#[cargo_test]
+fn offline_doesnt_auto_gc() {
+    // When running offline, auto-gc shouldn't run.
+    let p = basic_foo_bar_project();
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
+        .run();
+    // Remove the dependency.
+    p.change_file("Cargo.toml", &basic_manifest("foo", "0.1.0"));
+    // Run offline, make sure it doesn't delete anything
+    p.cargo("check --offline -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr("[CHECKING] foo v0.1.0[..]\n[FINISHED][..]")
+        .run();
+    assert_eq!(get_registry_names("src"), ["bar-1.0.0"]);
+    assert_eq!(get_registry_names("cache"), ["bar-1.0.0.crate"]);
+    // Run online, make sure auto-gc runs.
+    p.cargo("check -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr("[FINISHED][..]")
+        .run();
+    assert_eq!(get_registry_names("src"), &[] as &[String]);
+    assert_eq!(get_registry_names("cache"), &[] as &[String]);
 }

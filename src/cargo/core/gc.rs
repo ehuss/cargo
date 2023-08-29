@@ -420,6 +420,12 @@ pub fn auto_gc(config: &Config) {
     if !config.cli_unstable().gc {
         return;
     }
+    if !config.network_allowed() {
+        // As a conservative choice, auto-gc is disabled when offline. If the
+        // user is indefinitely offline, we don't want to delete things they
+        // may later depend on.
+        return;
+    }
 
     if let Err(e) = auto_gc_inner(config) {
         if last_use::is_silent_error(&e) && config.shell().verbosity() != Verbosity::Verbose {

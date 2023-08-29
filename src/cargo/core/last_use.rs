@@ -2,6 +2,12 @@
 //! up those files if they haven't been used in a while.
 //!
 //! TODO: Give an introduction on how everything works.
+//!
+//! ## Locking
+//!
+//! TODO: Describe that rusqlite defaults to 5s busy timeout. Explain to avoid
+//! that and to use package cache locking only so that there is feedback to
+//! the user, and to support indefinite blocking.
 
 use crate::core::gc::GcOpts;
 use crate::core::Verbosity;
