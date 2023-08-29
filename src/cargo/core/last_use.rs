@@ -7,11 +7,11 @@ use crate::core::gc::GcOpts;
 use crate::core::Verbosity;
 use crate::ops::{CleanContext, CleaningFolderBar};
 use crate::util::cache_lock::CacheLockMode;
-use crate::util::Filesystem;
-use crate::util::{Progress, ProgressStyle};
+use crate::util::sqlite::{self, basic_migration, Migration};
+use crate::util::{Filesystem, Progress, ProgressStyle};
 use crate::{CargoResult, Config};
 use anyhow::Context;
-use rusqlite::{params, Connection, ErrorCode, TransactionBehavior};
+use rusqlite::{params, Connection, ErrorCode};
 use std::collections::{hash_map, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -85,15 +85,6 @@ pub struct GitCheckout {
     pub short_name: String,
 }
 
-type Migration = Box<dyn Fn(&Connection) -> CargoResult<()>>;
-
-fn basic_migration(stmt: &'static str) -> Migration {
-    Box::new(|conn| {
-        conn.execute(stmt, [])?;
-        Ok(())
-    })
-}
-
 fn migrations() -> Vec<Migration> {
     vec![
         // registry_index tracks the overall usage of an index cache, and tracks a
@@ -143,6 +134,8 @@ fn migrations() -> Vec<Migration> {
                 last_auto_gc INTEGER NOT NULL
             )",
         ),
+        // TODO: Can use a function if I decide to keep with UNIX timestamps,
+        // and use basic_migration instead.
         Box::new(|conn| {
             conn.execute(
                 "INSERT INTO global_data (last_auto_gc) VALUES (?1)",
@@ -170,23 +163,7 @@ impl GlobalLastUse {
             // enabled), just process everything in memory.
             Connection::open_in_memory()?
         };
-        // EXCLUSIVE ensures that it starts with an exclusive write lock. No
-        // other readers will be allowed. This generally shouldn't be needed
-        // if there is a package cache lock, but might be helpful in cases
-        // where cargo's `FileLock` failed.
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Exclusive)?;
-        let user_version =
-            tx.query_row("SELECT user_version FROM pragma_user_version", [], |row| {
-                row.get(0)
-            })?;
-        let migrations = migrations();
-        if user_version < migrations.len() {
-            for migration in &migrations[user_version..] {
-                migration(&tx)?;
-            }
-            tx.pragma_update(None, "user_version", &migrations.len())?;
-        }
-        tx.commit()?;
+        sqlite::migrate(&mut conn, &migrations())?;
         Ok(GlobalLastUse {
             conn,
             auto_gc_checked_this_session: false,
