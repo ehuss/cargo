@@ -8,6 +8,7 @@ use crate::core::Verbosity;
 use crate::ops::{CleanContext, CleaningFolderBar};
 use crate::util::cache_lock::CacheLockMode;
 use crate::util::Filesystem;
+use crate::util::{Progress, ProgressStyle};
 use crate::{CargoResult, Config};
 use anyhow::Context;
 use rusqlite::{params, Connection, ErrorCode, TransactionBehavior};
@@ -727,11 +728,14 @@ impl GlobalLastUse {
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT DO NOTHING",
         )?;
+        let mut progress = Progress::with_style("Scanning", ProgressStyle::Ratio, config);
         let now = now();
         for index_name in index_names {
             let id = Self::registry_id_from_name(conn, &index_name)?;
             let index_path = base_path.join(index_name);
-            for src_name in Self::names_from(&index_path)? {
+            let src_names = Self::names_from(&index_path)?;
+            let max = src_names.len();
+            for (i, src_name) in src_names.iter().enumerate() {
                 if select_stmt.exists(params![id, src_name])? {
                     continue;
                 }
@@ -740,10 +744,12 @@ impl GlobalLastUse {
                 if !meta.is_dir() {
                     continue;
                 }
+                progress.tick(i, max, "")?;
                 let size = cargo_util::paths::du(&src_path)?;
                 insert_stmt.execute(params![id, src_name, size, now])?;
             }
         }
+        drop(progress);
 
         // Update NULL size entries.
         let mut null_stmt = conn.prepare_cached(
@@ -753,11 +759,15 @@ impl GlobalLastUse {
         )?;
         let mut update_stmt =
             conn.prepare_cached("UPDATE registry_src SET size = ?1 WHERE rowid = ?2")?;
+        let mut progress = Progress::with_style("Scanning", ProgressStyle::Ratio, config);
         // TODO: Don't use query_map, use query() and while let Some(row) = rows.next()?
-        let rows = null_stmt.query_map([], |row| {
-            Ok((row.get_unwrap(0), row.get_unwrap(1), row.get_unwrap(2)))
-        })?;
-        for row in rows {
+        let rows: Vec<_> = null_stmt
+            .query_map([], |row| {
+                Ok((row.get_unwrap(0), row.get_unwrap(1), row.get_unwrap(2)))
+            })?
+            .collect();
+        let max = rows.len();
+        for (i, row) in rows.into_iter().enumerate() {
             let (rowid, src_name, index_name): (i64, String, String) = row?;
             let path = base_path.join(index_name).join(src_name);
             if !path.exists() {
@@ -765,6 +775,7 @@ impl GlobalLastUse {
                 tracing::info!("`{path:?}` is missing");
                 continue;
             }
+            progress.tick(i, max, "")?;
             let size = cargo_util::paths::du(&path)?;
             update_stmt.execute(params![size, rowid])?;
         }
