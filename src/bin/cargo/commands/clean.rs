@@ -215,6 +215,9 @@ pub fn exec(config: &mut Config, args: &ArgMatches) -> CliResult {
     if gc.is_empty() && args.contains_id("gc") {
         gc.push(AutoGcKind::All);
     }
+    if !gc.is_empty() {
+        unstable_gc("gc")?;
+    }
 
     let mut gc_opts = GcOpts {
         max_src_age: unstable_duration_opt("max-src-age")?,

@@ -132,12 +132,13 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
 }
 
 #[cargo_test]
-fn gated() {
+fn auto_gc_gated() {
     // Requires -Zgc to both track last-use data and to run auto-gc.
     let p = basic_foo_bar_project();
     p.cargo("check")
         .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
         .run();
+    // Check that it did not create a database or delete anything.
     let config = ConfigBuilder::new().build();
     assert!(!GlobalLastUse::db_path(&config)
         .into_path_unlocked()
