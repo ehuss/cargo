@@ -294,6 +294,7 @@ fn try_acquire(path: &Path, lock_try: &dyn Fn() -> io::Result<()>) -> CargoResul
     //
     // [1]: https://github.com/rust-lang/cargo/issues/2615
     if is_on_nfs_mount(path) {
+        tracing::debug!("{path:?} appears to be an NFS mount, not trying to lock");
         return Ok(true);
     }
 
