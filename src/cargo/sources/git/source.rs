@@ -133,6 +133,21 @@ impl<'cfg> GitSource<'cfg> {
         }
         self.path_source.as_mut().unwrap().read_packages()
     }
+
+    fn mark_used(&self) -> CargoResult<()> {
+        let short_name = self
+            .short_id
+            .as_ref()
+            .expect("update before download")
+            .clone();
+        self.config
+            .deferred_global_last_use()?
+            .mark_git_checkout_used(global_cache_tracker::GitCheckout {
+                encoded_git_name: self.ident.clone(),
+                short_name,
+            });
+        Ok(())
+    }
 }
 
 /// Create an identifier from a URL,
@@ -206,6 +221,7 @@ impl<'cfg> Source for GitSource<'cfg> {
 
     fn block_until_ready(&mut self) -> CargoResult<()> {
         if self.path_source.is_some() {
+            self.mark_used()?;
             return Ok(());
         }
 
@@ -296,26 +312,19 @@ impl<'cfg> Source for GitSource<'cfg> {
         self.path_source = Some(path_source);
         self.short_id = Some(short_id.as_str().to_string());
         self.locked_rev = Some(actual_rev);
-        self.path_source.as_mut().unwrap().update()
+        self.path_source.as_mut().unwrap().update()?;
+
+        self.mark_used()?;
+        Ok(())
     }
 
     fn download(&mut self, id: PackageId) -> CargoResult<MaybePackage> {
-        let short_name = self
-            .short_id
-            .as_ref()
-            .expect("update before download")
-            .clone();
-        self.config
-            .deferred_global_last_use()?
-            .mark_git_checkout_used(global_cache_tracker::GitCheckout {
-                encoded_git_name: self.ident.clone(),
-                short_name,
-            });
         trace!(
             "getting packages for package ID `{}` from `{:?}`",
             id,
             self.remote
         );
+        self.mark_used()?;
         self.path_source
             .as_mut()
             .expect("BUG: `update()` must be called before `get()`")

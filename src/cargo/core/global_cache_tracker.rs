@@ -1088,7 +1088,6 @@ impl DeferredGlobalLastUse {
             &mut git_checkout_timestamps,
         );
         for (git_checkout, timestamp) in git_checkout_timestamps {
-            trace!("insert git checkout used {git_checkout:?} {timestamp}");
             let git_id = self.git_id(conn, &git_checkout.encoded_git_name)?;
             let mut stmt = conn.prepare_cached(
                 "INSERT INTO git_checkout (git_id, name, timestamp)

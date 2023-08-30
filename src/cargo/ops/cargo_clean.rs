@@ -415,10 +415,11 @@ impl<'cfg> CleanContext<'cfg> {
         let byte_count = if self.total_bytes_removed == 0 {
             String::new()
         } else {
-            let (bytes, unit) = human_readable_bytes(self.total_bytes_removed);
-            if bytes < 1024.0 {
-                format!(", {bytes}{unit} total")
+            // Don't show a fractional number of bytes.
+            if self.total_bytes_removed < 1024 {
+                format!(", {}B total", self.total_bytes_removed)
             } else {
+                let (bytes, unit) = human_readable_bytes(self.total_bytes_removed);
                 format!(", {bytes:.1}{unit} total")
             }
         };

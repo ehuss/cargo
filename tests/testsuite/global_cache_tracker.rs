@@ -1396,3 +1396,106 @@ fn can_handle_future_schema() -> anyhow::Result<()> {
         .run();
     Ok(())
 }
+
+#[cargo_test]
+fn clean_max_git_age() {
+    // --max-git-*-age flags
+    let (git_a, git_a_repo) = git::new_repo("git_a", |p| {
+        p.file("Cargo.toml", &basic_manifest("git_a", "1.0.0"))
+            .file("src/lib.rs", "")
+    });
+    let p = project()
+        .file(
+            "Cargo.toml",
+            &format!(
+                r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                git_a = {{ git = '{}' }}
+            "#,
+                git_a.url()
+            ),
+        )
+        .file("src/lib.rs", "")
+        .build();
+    // Populate last-use tracking.
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", days_ago_unix(4))
+        .run();
+    // Update git_a to create a separate checkout.
+    git_a.change_file("src/lib.rs", "// test");
+    git::add(&git_a_repo);
+    git::commit(&git_a_repo);
+    // Update last-use tracking, where the first git checkout will stay "old".
+    p.cargo("update -p git_a -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", days_ago_unix(2))
+        .with_stderr(
+            "\
+[UPDATING] git repository [..]
+[UPDATING] git_a v1.0.0 [..]
+",
+        )
+        .run();
+
+    let db_names = get_git_db_names();
+    assert_eq!(db_names.len(), 1);
+    let db_name = &db_names[0];
+    let co_names = get_git_checkout_names(&db_name);
+    assert_eq!(co_names.len(), 2);
+
+    // Delete the first checkout
+    p.cargo("clean -v -Zgc")
+        .arg("--max-git-co-age=3 days")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [ROOT]/home/.cargo/git/checkouts/git_a-[..]/[..]
+[REMOVED] [..]
+",
+        )
+        .run();
+
+    let db_names = get_git_db_names();
+    assert_eq!(db_names.len(), 1);
+    let co_names = get_git_checkout_names(&db_name);
+    assert_eq!(co_names.len(), 1);
+
+    // delete the second checkout
+    p.cargo("clean -v -Zgc")
+        .arg("--max-git-co-age=0 days")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [ROOT]/home/.cargo/git/checkouts/git_a-[..]/[..]
+[REMOVED] [..]
+",
+        )
+        .run();
+
+    let db_names = get_git_db_names();
+    assert_eq!(db_names.len(), 1);
+    let co_names = get_git_checkout_names(&db_name);
+    assert_eq!(co_names.len(), 0);
+
+    // delete the db
+    p.cargo("clean -v -Zgc")
+        .arg("--max-git-db-age=1 days")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [ROOT]/home/.cargo/git/db/git_a-[..]
+[REMOVED] [..]
+",
+        )
+        .run();
+
+    let db_names = get_git_db_names();
+    assert_eq!(db_names.len(), 0);
+    let co_names = get_git_checkout_names(&db_name);
+    assert_eq!(co_names.len(), 0);
+}
