@@ -85,3 +85,21 @@ pub fn migrate(conn: &mut Connection, migrations: &[Migration]) -> CargoResult<(
     tx.commit()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_twice() -> CargoResult<()> {
+        // Check that a second migration will apply.
+        let mut conn = Connection::open_in_memory()?;
+        let mut migrations = vec![basic_migration("CREATE TABLE foo (a, b, c)")];
+        migrate(&mut conn, &migrations)?;
+        conn.execute("INSERT INTO foo VALUES (1,2,3)", [])?;
+        migrations.push(basic_migration("ALTER TABLE foo ADD COLUMN d"));
+        migrate(&mut conn, &migrations)?;
+        conn.execute("INSERT INTO foo VALUES (1,2,3,4)", [])?;
+        Ok(())
+    }
+}
