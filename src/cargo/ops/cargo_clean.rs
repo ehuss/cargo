@@ -9,6 +9,7 @@ use crate::util::edit_distance;
 use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
 use crate::util::{human_readable_bytes, Config, Progress, ProgressStyle};
+use anyhow::bail;
 
 use cargo_util::paths;
 use std::fs;
@@ -61,33 +62,34 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
         let mut target_dir = ws.target_dir();
 
         if opts.doc {
+            if !opts.spec.is_empty() {
+                // FIXME: https://github.com/rust-lang/cargo/issues/8790
+                bail!("--doc cannot be used with -p");
+            }
             // If the doc option is set, we just want to delete the doc directory.
-            //
-            // FIXME: This ignores other flags, which it probably shouldn't.
-            // See https://github.com/rust-lang/cargo/issues/8790
             target_dir = target_dir.join("doc");
-            return ctx.clean_entire_folder(&target_dir.into_path_unlocked());
-        }
-
-        let profiles = Profiles::new(&ws, opts.requested_profile)?;
-
-        if opts.profile_specified {
-            // After parsing profiles we know the dir-name of the profile, if a profile
-            // was passed from the command line. If so, delete only the directory of
-            // that profile.
-            let dir_name = profiles.get_dir_name();
-            target_dir = target_dir.join(dir_name);
-        }
-
-        // If we have a spec, then we need to delete some packages, otherwise, just
-        // remove the whole target directory and be done with it!
-        //
-        // Note that we don't bother grabbing a lock here as we're just going to
-        // blow it all away anyway.
-        if opts.spec.is_empty() {
             ctx.clean_entire_folder(&target_dir.into_path_unlocked())?;
         } else {
-            clean_specs(&mut ctx, &ws, &profiles, &opts.targets, &opts.spec)?;
+            let profiles = Profiles::new(&ws, opts.requested_profile)?;
+
+            if opts.profile_specified {
+                // After parsing profiles we know the dir-name of the profile, if a profile
+                // was passed from the command line. If so, delete only the directory of
+                // that profile.
+                let dir_name = profiles.get_dir_name();
+                target_dir = target_dir.join(dir_name);
+            }
+
+            // If we have a spec, then we need to delete some packages, otherwise, just
+            // remove the whole target directory and be done with it!
+            //
+            // Note that we don't bother grabbing a lock here as we're just going to
+            // blow it all away anyway.
+            if opts.spec.is_empty() {
+                ctx.clean_entire_folder(&target_dir.into_path_unlocked())?;
+            } else {
+                clean_specs(&mut ctx, &ws, &profiles, &opts.targets, &opts.spec)?;
+            }
         }
     }
 

@@ -272,7 +272,7 @@ fn clean_doc() {
 
     assert!(doc_path.is_dir());
 
-    p.cargo("clean --doc").run();
+    p.cargo("clean --doc").with_stderr("[REMOVED] [..]").run();
 
     assert!(!doc_path.is_dir());
     assert!(p.build_dir().is_dir());
@@ -744,5 +744,15 @@ fn clean_dry_run() {
         .masquerade_as_nightly_cargo(&["gc"])
         .with_stdout_unordered(expected)
         .with_stderr("[SUMMARY] [..] files/directories, [..] total")
+        .run();
+}
+
+#[cargo_test]
+fn doc_with_package_selection() {
+    // --doc with -p
+    let p = project().file("src/lib.rs", "").build();
+    p.cargo("clean --doc -p foo")
+        .with_status(101)
+        .with_stderr("error: --doc cannot be used with -p")
         .run();
 }

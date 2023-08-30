@@ -1586,3 +1586,27 @@ fn clean_max_src_crate_age() {
         )
         .run();
 }
+
+#[cargo_test]
+fn clean_doc_with_cache() {
+    // clean --doc with other cache flags should do both.
+    let p = basic_foo_bar_project();
+    p.cargo("doc -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
+        .run();
+    assert_eq!(get_registry_names("src"), ["bar-1.0.0"]);
+    assert_eq!(get_registry_names("cache"), ["bar-1.0.0.crate"]);
+    assert!(p.build_dir().join("doc").exists());
+    p.cargo("clean --doc --max-download-size=0 -v -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr_unordered(
+            "\
+[REMOVING] [ROOT]/foo/target/doc
+[REMOVING] [ROOT]/home/.cargo/registry/src/[..]/bar-1.0.0
+[REMOVING] [ROOT]/home/.cargo/registry/cache/[..]/bar-1.0.0.crate
+[REMOVED] [..]
+",
+        )
+        .run();
+}
