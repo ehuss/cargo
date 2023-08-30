@@ -1311,3 +1311,31 @@ fn offline_doesnt_auto_gc() {
     assert_eq!(get_registry_names("src"), &[] as &[String]);
     assert_eq!(get_registry_names("cache"), &[] as &[String]);
 }
+
+#[cargo_test]
+fn can_handle_future_schema() -> anyhow::Result<()> {
+    // It should work when a future version of cargo has made schema changes
+    // to the database.
+    let p = basic_foo_bar_project();
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", months_ago_unix(4))
+        .run();
+    // Modify the schema to pretend this is done by a future version of cargo.
+    let config = ConfigBuilder::new().build();
+    let db_path = GlobalLastUse::db_path(&config).into_path_unlocked();
+    let conn = rusqlite::Connection::open(&db_path)?;
+    let user_version: u32 =
+        conn.query_row("SELECT user_version FROM pragma_user_version", [], |row| {
+            row.get(0)
+        })?;
+    conn.execute("ALTER TABLE global_data ADD COLUMN foo DEFAULT 123", [])?;
+    conn.pragma_update(None, "user_version", &(user_version + 1))?;
+    drop(conn);
+    // Verify it doesn't blow up.
+    p.cargo("clean --max-download-size=0 -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr("[REMOVED] 6 files/directories, [..] total")
+        .run();
+    Ok(())
+}

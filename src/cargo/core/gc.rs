@@ -448,7 +448,7 @@ fn auto_gc_inner(config: &Config) -> CargoResult<()> {
             return Ok(());
         }
     };
-    // This should not be called when there are pending deferred entries.
+    // This should not be called when there are pending deferred entries, so check that.
     let deferred = config.deferred_global_last_use()?;
     debug_assert!(deferred.is_empty());
     let mut last_use = config.global_last_use()?;
