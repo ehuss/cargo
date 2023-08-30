@@ -1499,3 +1499,90 @@ fn clean_max_git_age() {
     let co_names = get_git_checkout_names(&db_name);
     assert_eq!(co_names.len(), 0);
 }
+
+#[cargo_test]
+fn clean_max_src_crate_age() {
+    // --max-src-age and --max-crate-age flags
+    let p = basic_foo_bar_project();
+    // Populate last-use tracking.
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", days_ago_unix(4))
+        .run();
+    // Update bar to create a separate copy with a different timestamp.
+    Package::new("bar", "1.0.1").publish();
+    p.cargo("update -p bar -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", days_ago_unix(2))
+        .with_stderr(
+            "\
+[UPDATING] `dummy-registry` index
+[UPDATING] bar v1.0.0 -> v1.0.1
+",
+        )
+        .run();
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", days_ago_unix(2))
+        .with_stderr(
+            "\
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.1 [..]
+",
+        )
+        .run();
+
+    assert_eq!(get_registry_names("src"), ["bar-1.0.0", "bar-1.0.1"]);
+    assert_eq!(
+        get_registry_names("cache"),
+        ["bar-1.0.0.crate", "bar-1.0.1.crate"]
+    );
+
+    // Delete the old src.
+    p.cargo("clean -v -Zgc")
+        .arg("--max-src-age=3 days")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [..]/bar-1.0.0
+[REMOVED] [..]
+",
+        )
+        .run();
+
+    // delete the second src
+    p.cargo("clean -v -Zgc")
+        .arg("--max-src-age=0 days")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [..]/bar-1.0.1
+[REMOVED] [..]
+",
+        )
+        .run();
+
+    // delete the old crate
+    p.cargo("clean -v -Zgc")
+        .arg("--max-crate-age=3 days")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [..]/bar-1.0.0.crate
+[REMOVED] [..]
+",
+        )
+        .run();
+
+    // delete the seecond crate
+    p.cargo("clean -v -Zgc")
+        .arg("--max-crate-age=0 days")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [..]/bar-1.0.1.crate
+[REMOVED] [..]
+",
+        )
+        .run();
+}
