@@ -1,6 +1,6 @@
 //! Access to a HTTP-based crate registry. See [`HttpRegistry`] for details.
 
-use crate::core::last_use;
+use crate::core::global_cache_tracker;
 use crate::core::{PackageId, SourceId};
 use crate::sources::registry::download;
 use crate::sources::registry::MaybeLock;
@@ -459,7 +459,7 @@ impl<'cfg> RegistryData for HttpRegistry<'cfg> {
     fn prepare(&self) -> CargoResult<()> {
         self.config
             .deferred_global_last_use()?
-            .mark_registry_index_used(last_use::RegistryIndex {
+            .mark_registry_index_used(global_cache_tracker::RegistryIndex {
                 encoded_registry_name: self.name.clone(),
             });
         Ok(())

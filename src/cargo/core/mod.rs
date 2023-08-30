@@ -20,7 +20,7 @@ pub mod compiler;
 pub mod dependency;
 pub mod features;
 pub mod gc;
-pub mod last_use;
+pub mod global_cache_tracker;
 pub mod manifest;
 pub mod package;
 pub mod package_id;

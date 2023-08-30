@@ -9,9 +9,9 @@
 //! by passing any option that requests deleting unused files.
 //!
 //! Garbage collection is guided by the last-use tracking implemented in the
-//! [`crate::core::last_use`] module.
+//! [`crate::core::global_cache_tracker`] module.
 
-use crate::core::last_use::{self, GlobalLastUse};
+use crate::core::global_cache_tracker::{self, GlobalCacheTracker};
 use crate::core::Verbosity;
 use crate::ops::CleanContext;
 use crate::util::cache_lock::{CacheLock, CacheLockMode};
@@ -24,7 +24,7 @@ use std::time::Duration;
 /// Garbage collector.
 pub struct Gc<'a, 'config> {
     config: &'config Config,
-    global_last_use: &'a mut GlobalLastUse,
+    global_cache_tracker: &'a mut GlobalCacheTracker,
     /// A lock on the package cache.
     ///
     /// This is important to be held, since we don't want multiple cargos to
@@ -220,12 +220,12 @@ pub enum AutoGcKind {
 impl<'a, 'config> Gc<'a, 'config> {
     pub fn new(
         config: &'config Config,
-        global_last_use: &'a mut GlobalLastUse,
+        global_cache_tracker: &'a mut GlobalCacheTracker,
     ) -> CargoResult<Gc<'a, 'config>> {
         let lock = config.acquire_package_cache_lock(CacheLockMode::MutateExclusive)?;
         Ok(Gc {
             config,
-            global_last_use,
+            global_cache_tracker,
             lock,
         })
     }
@@ -249,14 +249,14 @@ impl<'a, 'config> Gc<'a, 'config> {
             tracing::trace!("auto gc disabled");
             return Ok(());
         };
-        if !self.global_last_use.should_run_auto_gc(freq)? {
+        if !self.global_cache_tracker.should_run_auto_gc(freq)? {
             return Ok(());
         }
         let mut gc_opts = GcOpts::default();
         gc_opts.update_for_auto_gc_config(&auto_config, &[AutoGcKind::All], None)?;
         self.gc(clean_ctx, &gc_opts)?;
         if !clean_ctx.dry_run {
-            self.global_last_use.set_last_auto_gc()?;
+            self.global_cache_tracker.set_last_auto_gc()?;
         }
         Ok(())
     }
@@ -267,7 +267,7 @@ impl<'a, 'config> Gc<'a, 'config> {
         clean_ctx: &mut CleanContext<'config>,
         gc_opts: &GcOpts,
     ) -> CargoResult<()> {
-        self.global_last_use.clean(clean_ctx, gc_opts)?;
+        self.global_cache_tracker.clean(clean_ctx, gc_opts)?;
         // In the future, other gc operations go here, such as target cleaning.
         Ok(())
     }
@@ -428,7 +428,9 @@ pub fn auto_gc(config: &Config) {
     }
 
     if let Err(e) = auto_gc_inner(config) {
-        if last_use::is_silent_error(&e) && config.shell().verbosity() != Verbosity::Verbose {
+        if global_cache_tracker::is_silent_error(&e)
+            && config.shell().verbosity() != Verbosity::Verbose
+        {
             tracing::warn!("failed to auto-clean cache data: {e:?}");
         } else {
             crate::display_warning_with_error(
@@ -451,8 +453,8 @@ fn auto_gc_inner(config: &Config) -> CargoResult<()> {
     // This should not be called when there are pending deferred entries, so check that.
     let deferred = config.deferred_global_last_use()?;
     debug_assert!(deferred.is_empty());
-    let mut last_use = config.global_last_use()?;
-    let mut gc = Gc::new(config, &mut last_use)?;
+    let mut global_cache_tracker = config.global_cache_tracker()?;
+    let mut gc = Gc::new(config, &mut global_cache_tracker)?;
     let mut clean_ctx = CleanContext::new(config);
     gc.auto(&mut clean_ctx)?;
     Ok(())

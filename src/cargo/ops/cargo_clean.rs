@@ -1,6 +1,6 @@
 use crate::core::compiler::{CompileKind, CompileMode, Layout, RustcTargetData};
 use crate::core::gc::{AutoGcKind, Gc, GcOpts};
-use crate::core::last_use::GlobalLastUse;
+use crate::core::global_cache_tracker::GlobalCacheTracker;
 use crate::core::profiles::Profiles;
 use crate::core::{PackageIdSpec, TargetKind, Workspace};
 use crate::ops;
@@ -94,8 +94,8 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
     if config.cli_unstable().gc {
         // TODO: Think about trying to consolidate these 4 lines somehow.
         let _lock = config.acquire_package_cache_lock(CacheLockMode::MutateExclusive)?;
-        let mut last_use = GlobalLastUse::new(&config)?;
-        let mut gc = Gc::new(config, &mut last_use)?;
+        let mut cache_track = GlobalCacheTracker::new(&config)?;
+        let mut gc = Gc::new(config, &mut cache_track)?;
         if no_opts_specified {
             // This is the behavior for `cargo clean` without *any* options.
             // It uses the defaults from config to determine what is cleaned.

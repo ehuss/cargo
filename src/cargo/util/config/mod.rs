@@ -68,7 +68,7 @@ use std::time::Instant;
 
 use self::ConfigValue as CV;
 use crate::core::compiler::rustdoc::RustdocExternMap;
-use crate::core::last_use::{DeferredGlobalLastUse, GlobalLastUse};
+use crate::core::global_cache_tracker::{DeferredGlobalLastUse, GlobalCacheTracker};
 use crate::core::shell::Verbosity;
 use crate::core::{features, CliUnstable, Shell, SourceId, Workspace, WorkspaceRootConfig};
 use crate::ops::RegistryCredentialConfig;
@@ -244,7 +244,7 @@ pub struct Config {
     pub nightly_features_allowed: bool,
     /// WorkspaceRootConfigs that have been found
     pub ws_roots: RefCell<HashMap<PathBuf, WorkspaceRootConfig>>,
-    global_last_use: LazyCell<RefCell<GlobalLastUse>>,
+    global_cache_tracker: LazyCell<RefCell<GlobalCacheTracker>>,
     deferred_global_last_use: LazyCell<RefCell<DeferredGlobalLastUse>>,
 }
 
@@ -319,7 +319,7 @@ impl Config {
             env_config: LazyCell::new(),
             nightly_features_allowed: matches!(&*features::channel(), "nightly" | "dev"),
             ws_roots: RefCell::new(HashMap::new()),
-            global_last_use: LazyCell::new(),
+            global_cache_tracker: LazyCell::new(),
             deferred_global_last_use: LazyCell::new(),
         }
     }
@@ -1921,15 +1921,15 @@ impl Config {
         self.package_cache_lock.try_lock(self, mode)
     }
 
-    /// Returns a reference to the shared [`GlobalLastUse`].
+    /// Returns a reference to the shared [`GlobalCacheTracker`].
     ///
     /// The package cache lock must be held to call this function (and to use
     /// it in general).
-    pub fn global_last_use(&self) -> CargoResult<RefMut<'_, GlobalLastUse>> {
-        let last_use = self
-            .global_last_use
-            .try_borrow_with(|| Ok::<_, anyhow::Error>(RefCell::new(GlobalLastUse::new(self)?)))?;
-        Ok(last_use.borrow_mut())
+    pub fn global_cache_tracker(&self) -> CargoResult<RefMut<'_, GlobalCacheTracker>> {
+        let tracker = self.global_cache_tracker.try_borrow_with(|| {
+            Ok::<_, anyhow::Error>(RefCell::new(GlobalCacheTracker::new(self)?))
+        })?;
+        Ok(tracker.borrow_mut())
     }
 
     /// Returns a reference to the shared [`DeferredGlobalLastUse`].

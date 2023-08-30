@@ -8,7 +8,7 @@ use cargo_credential::Operation;
 use cargo_util::registry::make_dep_path;
 use cargo_util::Sha256;
 
-use crate::core::last_use;
+use crate::core::global_cache_tracker;
 use crate::core::PackageId;
 use crate::sources::registry::MaybeLock;
 use crate::sources::registry::RegistryConfig;
@@ -52,13 +52,13 @@ pub(super) fn download(
     if let Ok(dst) = File::open(path) {
         let meta = dst.metadata()?;
         if meta.len() > 0 {
-            config
-                .deferred_global_last_use()?
-                .mark_registry_crate_used(last_use::RegistryCrate {
+            config.deferred_global_last_use()?.mark_registry_crate_used(
+                global_cache_tracker::RegistryCrate {
                     encoded_registry_name,
                     crate_filename: pkg.tarball_name(),
                     size: meta.len(),
-                });
+                },
+            );
             return Ok(MaybeLock::Ready(dst));
         }
     }
@@ -124,13 +124,13 @@ pub(super) fn finish_download(
     if actual != checksum {
         anyhow::bail!("failed to verify the checksum of `{}`", pkg)
     }
-    config
-        .deferred_global_last_use()?
-        .mark_registry_crate_used(last_use::RegistryCrate {
+    config.deferred_global_last_use()?.mark_registry_crate_used(
+        global_cache_tracker::RegistryCrate {
             encoded_registry_name,
             crate_filename: pkg.tarball_name(),
             size: data.len() as u64,
-        });
+        },
+    );
 
     cache_path.create_dir()?;
     let path = cache_path.join(&pkg.tarball_name());

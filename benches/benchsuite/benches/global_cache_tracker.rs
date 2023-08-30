@@ -1,16 +1,16 @@
-use cargo::core::last_use::{self, DeferredGlobalLastUse, GlobalLastUse};
+use cargo::core::global_cache_tracker::{self, DeferredGlobalLastUse, GlobalCacheTracker};
 use cargo::util::cache_lock::CacheLockMode;
 use cargo::util::Config;
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const LAST_USE_SAMPLE: &str = "last-use/last-use-sample";
+const GLOBAL_CACHE_SAMPLE: &str = "global-cache-tracker/global-cache-sample";
 
 /// A scratch directory where the benchmark can place some files.
 fn root() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
-    p.push("bench_last_use");
+    p.push("bench_global_cache_tracker");
     p
 }
 
@@ -21,17 +21,12 @@ fn cargo_home() -> PathBuf {
 }
 
 fn initialize_config() -> Config {
+    // Set up config.
     let shell = cargo::core::Shell::new();
     let homedir = cargo_home();
     if !homedir.exists() {
         fs::create_dir_all(&homedir).unwrap();
     }
-    let f = homedir.join(".last-use"); // TODO
-    if f.exists() {
-        fs::remove_file(f).unwrap();
-    }
-    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join(LAST_USE_SAMPLE);
-    fs::copy(sample, homedir.join(".last-use")).unwrap();
     let cwd = homedir.clone();
     let mut config = Config::new(shell, cwd, homedir);
     config.nightly_features_allowed = true;
@@ -49,40 +44,48 @@ fn initialize_config() -> Config {
             &[],
         )
         .unwrap();
+    // Set up database sample.
+    let db_path = GlobalCacheTracker::db_path(&config).into_path_unlocked();
+    if db_path.exists() {
+        fs::remove_file(&db_path).unwrap();
+    }
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join(GLOBAL_CACHE_SAMPLE);
+    fs::copy(sample, &db_path).unwrap();
     config
 }
 
-/// Benchmarks how long it takes to initialize `GlobalLastUse` with an already
+/// Benchmarks how long it takes to initialize `GlobalCacheTracker` with an already
 /// existing full database.
-fn global_last_use_init(c: &mut Criterion) {
+fn global_tracker_init(c: &mut Criterion) {
     let config = initialize_config();
     let _lock = config
         .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
         .unwrap();
-    c.bench_function("global_last_use_init", |b| {
+    c.bench_function("global_tracker_init", |b| {
         b.iter(|| {
-            GlobalLastUse::new(&config).unwrap();
+            GlobalCacheTracker::new(&config).unwrap();
         })
     });
 }
 
-/// Benchmarks how long it takes to save a `GlobalLastUse` when there are zero
+/// Benchmarks how long it takes to save a `GlobalCacheTracker` when there are zero
 /// updates.
-fn global_last_use_empty_save(c: &mut Criterion) {
+fn global_tracker_empty_save(c: &mut Criterion) {
     let config = initialize_config();
     let _lock = config
         .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
         .unwrap();
     let mut deferred = DeferredGlobalLastUse::new();
-    let mut last_use = GlobalLastUse::new(&config).unwrap();
+    let mut tracker = GlobalCacheTracker::new(&config).unwrap();
 
-    c.bench_function("global_last_use_empty_save", |b| {
+    c.bench_function("global_tracker_empty_save", |b| {
         b.iter(|| {
-            deferred.save(&mut last_use).unwrap();
+            deferred.save(&mut tracker).unwrap();
         })
     });
 }
 
+/// This is a random sample of real crate names.
 static RANDOM_SAMPLE: &[&str] = &[
     "euclid-0.19.9",
     "conduit-static-0.9.0-alpha.4",
@@ -586,42 +589,44 @@ static RANDOM_SAMPLE: &[&str] = &[
     "tar-0.4.37",
 ];
 
-fn global_last_use_update(c: &mut Criterion) {
+/// Tests performance of updating the last-use timestamps in an already
+/// populated database.
+fn global_tracker_update(c: &mut Criterion) {
     let config = initialize_config();
     let _lock = config
         .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
         .unwrap();
-    // TODO: try to avoid these three lines somehow
-    let homedir = cargo_home();
-    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join(LAST_USE_SAMPLE);
-    let f = homedir.join(".last-use"); // TODO
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join(GLOBAL_CACHE_SAMPLE);
+    let db_path = GlobalCacheTracker::db_path(&config).into_path_unlocked();
 
+    // FIXME: This shouldn't be hard-coded, and needs to be kept in sync with
+    // the captured sample.
     let crates_io = String::from("github.com-1ecc6299db9ec823");
 
-    let mut group = c.benchmark_group("global_last_use_update");
+    let mut group = c.benchmark_group("global_tracker_update");
     for size in [1, 10, 100, 500] {
-        if f.exists() {
-            fs::remove_file(&f).unwrap();
+        if db_path.exists() {
+            fs::remove_file(&db_path).unwrap();
         }
 
-        fs::copy(&sample, homedir.join(".last-use")).unwrap();
+        fs::copy(&sample, &db_path).unwrap();
         let mut deferred = DeferredGlobalLastUse::new();
-        let mut last_use = GlobalLastUse::new(&config).unwrap();
+        let mut tracker = GlobalCacheTracker::new(&config).unwrap();
         group.bench_with_input(size.to_string(), &size, |b, &size| {
             b.iter(|| {
                 for name in &RANDOM_SAMPLE[..size] {
-                    deferred.mark_registry_crate_used(last_use::RegistryCrate {
+                    deferred.mark_registry_crate_used(global_cache_tracker::RegistryCrate {
                         encoded_registry_name: crates_io.clone(),
                         crate_filename: format!("{}.crate", name),
                         size: 12345678,
                     });
-                    deferred.mark_registry_src_used(last_use::RegistrySrc {
+                    deferred.mark_registry_src_used(global_cache_tracker::RegistrySrc {
                         encoded_registry_name: crates_io.clone(),
                         package_dir: name.to_string(),
                         size: Some(12345678),
                     });
                 }
-                deferred.save(&mut last_use).unwrap();
+                deferred.save(&mut tracker).unwrap();
             })
         });
     }
@@ -629,8 +634,8 @@ fn global_last_use_update(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    global_last_use_init,
-    global_last_use_empty_save,
-    global_last_use_update
+    global_tracker_init,
+    global_tracker_empty_save,
+    global_tracker_update
 );
 criterion_main!(benches);

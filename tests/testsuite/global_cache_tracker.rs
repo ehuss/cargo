@@ -1,7 +1,7 @@
 //! Tests for last-use tracking and auto-gc.
 
 use super::config::ConfigBuilder;
-use cargo::core::last_use::{self, DeferredGlobalLastUse, GlobalLastUse};
+use cargo::core::global_cache_tracker::{self, DeferredGlobalLastUse, GlobalCacheTracker};
 use cargo::util::cache_lock::CacheLockMode;
 use cargo::Config;
 use cargo_test_support::paths::{self, CargoPathExt};
@@ -83,12 +83,14 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
     let cache_dir = paths::home().join(".cargo/registry/cache/example.com-a6c4a5adcb232b9a");
     let src_dir = paths::home().join(".cargo/registry/src/example.com-a6c4a5adcb232b9a");
 
-    GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
+    GlobalCacheTracker::db_path(&config)
+        .into_path_unlocked()
+        .rm_rf();
 
     let _lock = config
         .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
         .unwrap();
-    let mut last_use = GlobalLastUse::new(&config).unwrap();
+    let mut tracker = GlobalCacheTracker::new(&config).unwrap();
     let mut deferred = DeferredGlobalLastUse::new();
 
     cache_dir.rm_rf();
@@ -98,7 +100,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
     let mut create = |name: &str, age, crate_size: u64, src_size: u64| {
         let crate_filename = format!("{name}.crate");
         deferred.mark_registry_crate_used_stamp(
-            last_use::RegistryCrate {
+            global_cache_tracker::RegistryCrate {
                 encoded_registry_name: "example.com-a6c4a5adcb232b9a".to_string(),
                 crate_filename: crate_filename.clone(),
                 size: crate_size,
@@ -106,7 +108,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
             Some(&days_ago(age)),
         );
         deferred.mark_registry_src_used_stamp(
-            last_use::RegistrySrc {
+            global_cache_tracker::RegistrySrc {
                 encoded_registry_name: "example.com-a6c4a5adcb232b9a".to_string(),
                 package_dir: name.to_string(),
                 size: Some(src_size),
@@ -126,7 +128,7 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
     for (name, age, crate_size, src_size) in test_crates {
         create(name, *age, *crate_size, *src_size);
     }
-    deferred.save(&mut last_use).unwrap();
+    deferred.save(&mut tracker).unwrap();
 
     (cache_dir, src_dir)
 }
@@ -140,17 +142,64 @@ fn auto_gc_gated() {
         .run();
     // Check that it did not create a database or delete anything.
     let config = ConfigBuilder::new().build();
-    assert!(!GlobalLastUse::db_path(&config)
+    assert!(!GlobalCacheTracker::db_path(&config)
         .into_path_unlocked()
         .exists());
     assert_eq!(get_index_names().len(), 1);
 
     // Again in the future, shouldn't auto-gc.
     p.cargo("check").run();
-    assert!(!GlobalLastUse::db_path(&config)
+    assert!(!GlobalCacheTracker::db_path(&config)
         .into_path_unlocked()
         .exists());
     assert_eq!(get_index_names().len(), 1);
+}
+
+#[cargo_test]
+fn cache_clean_options_gated() {
+    // Checks that all cache clean options require -Zgc.
+    let p = project().build();
+    for opt in [
+        "--dry-run",
+        "--gc",
+        "--max-src-age=0 day",
+        "--max-index-age=0 day",
+        "--max-git-co-age=0 day",
+        "--max-git-db-age=0 day",
+        "--max-download-age=0 day",
+        "--max-src-size=0",
+        "--max-crate-size=0",
+        "--max-download-size=0",
+    ] {
+        let trimmed_opt = opt.trim_start_matches('-').split('=').next().unwrap();
+        p.cargo("clean")
+            .arg(opt)
+            .with_status(101)
+            .with_stderr(&format!(
+                "\
+error: the `{trimmed_opt}` flag is unstable, [..]
+See [..]
+See [..] for more information about the `{trimmed_opt}` flag.
+"
+            ))
+            .run();
+    }
+
+    for opt in [
+        "--max-target-age=0 day",
+        "--max-shared-target-age=0 day",
+        "--max-target-size=0",
+        "--max-shared-target-size=0",
+    ] {
+        let trimmed_opt = opt.split('=').next().unwrap();
+        p.cargo("clean")
+            .arg(opt)
+            .with_status(101)
+            .with_stderr(&format!(
+                "error: option {trimmed_opt} is not yet implemented"
+            ))
+            .run();
+    }
 }
 
 #[cargo_test]
@@ -162,25 +211,25 @@ fn implies_source() {
         .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
         .unwrap();
     let mut deferred = DeferredGlobalLastUse::new();
-    let mut last_use = GlobalLastUse::new(&config).unwrap();
+    let mut tracker = GlobalCacheTracker::new(&config).unwrap();
 
-    deferred.mark_registry_crate_used(last_use::RegistryCrate {
+    deferred.mark_registry_crate_used(global_cache_tracker::RegistryCrate {
         encoded_registry_name: "example.com-a6c4a5adcb232b9a".to_string(),
         crate_filename: "regex-1.8.4.crate".to_string(),
         size: 123,
     });
-    deferred.mark_registry_src_used(last_use::RegistrySrc {
+    deferred.mark_registry_src_used(global_cache_tracker::RegistrySrc {
         encoded_registry_name: "index.crates.io-6f17d22bba15001f".to_string(),
         package_dir: "rand-0.8.5".to_string(),
         size: None,
     });
-    deferred.mark_git_checkout_used(last_use::GitCheckout {
+    deferred.mark_git_checkout_used(global_cache_tracker::GitCheckout {
         encoded_git_name: "cargo-e7ff1db891893a9e".to_string(),
         short_name: "f0a4ee0".to_string(),
     });
-    deferred.save(&mut last_use).unwrap();
+    deferred.save(&mut tracker).unwrap();
 
-    let mut indexes = last_use.registry_index_all().unwrap();
+    let mut indexes = tracker.registry_index_all().unwrap();
     assert_eq!(indexes.len(), 2);
     indexes.sort_by(|a, b| a.0.encoded_registry_name.cmp(&b.0.encoded_registry_name));
     assert_eq!(
@@ -192,7 +241,7 @@ fn implies_source() {
         "index.crates.io-6f17d22bba15001f"
     );
 
-    let dbs = last_use.git_db_all().unwrap();
+    let dbs = tracker.git_db_all().unwrap();
     assert_eq!(dbs.len(), 1);
     assert_eq!(dbs[0].0.encoded_git_name, "cargo-e7ff1db891893a9e");
 }
@@ -516,12 +565,12 @@ fn auto_gc_various_commands() {
         let lock = config
             .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
             .unwrap();
-        let last_use = GlobalLastUse::new(&config).unwrap();
-        let indexes = last_use.registry_index_all().unwrap();
+        let tracker = GlobalCacheTracker::new(&config).unwrap();
+        let indexes = tracker.registry_index_all().unwrap();
         assert_eq!(indexes.len(), 1);
-        let crates = last_use.registry_crate_all().unwrap();
+        let crates = tracker.registry_crate_all().unwrap();
         assert_eq!(crates.len(), 1);
-        let srcs = last_use.registry_src_all().unwrap();
+        let srcs = tracker.registry_src_all().unwrap();
         assert_eq!(srcs.len(), 1);
         drop(lock);
 
@@ -534,15 +583,17 @@ fn auto_gc_various_commands() {
         let lock = config
             .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
             .unwrap();
-        let indexes = last_use.registry_index_all().unwrap();
+        let indexes = tracker.registry_index_all().unwrap();
         assert_eq!(indexes.len(), 0);
-        let crates = last_use.registry_crate_all().unwrap();
+        let crates = tracker.registry_crate_all().unwrap();
         assert_eq!(crates.len(), 0);
-        let srcs = last_use.registry_src_all().unwrap();
+        let srcs = tracker.registry_src_all().unwrap();
         assert_eq!(srcs.len(), 0);
         drop(lock);
         paths::home().join(".cargo/registry").rm_rf();
-        GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
+        GlobalCacheTracker::db_path(&config)
+            .into_path_unlocked()
+            .rm_rf();
     }
 }
 
@@ -597,16 +648,18 @@ fn updates_last_use_various_commands() {
         let lock = config
             .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
             .unwrap();
-        let last_use = GlobalLastUse::new(&config).unwrap();
-        let indexes = last_use.registry_index_all().unwrap();
+        let tracker = GlobalCacheTracker::new(&config).unwrap();
+        let indexes = tracker.registry_index_all().unwrap();
         assert_eq!(indexes.len(), 1);
-        let crates = last_use.registry_crate_all().unwrap();
+        let crates = tracker.registry_crate_all().unwrap();
         assert_eq!(crates.len(), expected_crates);
-        let srcs = last_use.registry_src_all().unwrap();
+        let srcs = tracker.registry_src_all().unwrap();
         assert_eq!(srcs.len(), expected_crates);
         drop(lock);
         paths::home().join(".cargo/registry").rm_rf();
-        GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
+        GlobalCacheTracker::db_path(&config)
+            .into_path_unlocked()
+            .rm_rf();
     }
 }
 
@@ -643,8 +696,8 @@ fn both_git_and_http_index_cleans() {
     let lock = config
         .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
         .unwrap();
-    let last_use = GlobalLastUse::new(&config).unwrap();
-    let indexes = last_use.registry_index_all().unwrap();
+    let tracker = GlobalCacheTracker::new(&config).unwrap();
+    let indexes = tracker.registry_index_all().unwrap();
     assert_eq!(indexes.len(), 2);
     assert_eq!(get_index_names().len(), 2);
     drop(lock);
@@ -657,7 +710,7 @@ fn both_git_and_http_index_cleans() {
     let lock = config
         .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
         .unwrap();
-    let indexes = last_use.registry_index_all().unwrap();
+    let indexes = tracker.registry_index_all().unwrap();
     assert_eq!(indexes.len(), 0);
     assert_eq!(get_index_names().len(), 0);
     drop(lock);
@@ -752,8 +805,8 @@ fn tracks_sizes() {
     let _lock = config
         .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
         .unwrap();
-    let last_use = GlobalLastUse::new(&config).unwrap();
-    let mut crates = last_use.registry_crate_all().unwrap();
+    let tracker = GlobalCacheTracker::new(&config).unwrap();
+    let mut crates = tracker.registry_crate_all().unwrap();
     crates.sort_by(|a, b| a.0.crate_filename.cmp(&b.0.crate_filename));
     let db_sizes: Vec<_> = crates.iter().map(|c| c.0.size).collect();
 
@@ -769,7 +822,7 @@ fn tracks_sizes() {
     assert_eq!(db_sizes, actual_sizes);
 
     // Also check the src sizes are computed.
-    let mut srcs = last_use.registry_src_all().unwrap();
+    let mut srcs = tracker.registry_src_all().unwrap();
     srcs.sort_by(|a, b| a.0.package_dir.cmp(&b.0.package_dir));
     let db_sizes: Vec<_> = srcs.iter().map(|c| c.0.size.unwrap()).collect();
     let mut actual: Vec<_> = p
@@ -907,8 +960,8 @@ fn max_size_untracked_crate() {
     let _lock = config
         .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
         .unwrap();
-    let last_use = GlobalLastUse::new(&config).unwrap();
-    let crates = last_use.registry_crate_all().unwrap();
+    let tracker = GlobalCacheTracker::new(&config).unwrap();
+    let crates = tracker.registry_crate_all().unwrap();
     let mut actual: Vec<_> = crates
         .iter()
         .map(|(rc, _time)| (rc.crate_filename.as_str(), rc.size))
@@ -924,7 +977,9 @@ fn max_size_untracked_prepare() -> (Config, Project) {
     p.cargo("fetch").run();
     // Pretend it was an older version that did not track last-use.
     let config = ConfigBuilder::new().unstable_flag("gc").build();
-    GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
+    GlobalCacheTracker::db_path(&config)
+        .into_path_unlocked()
+        .rm_rf();
     (config, p)
 }
 
@@ -944,8 +999,8 @@ fn max_size_untracked_verify(config: &Config) {
     let lock = config
         .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
         .unwrap();
-    let last_use = GlobalLastUse::new(&config).unwrap();
-    let srcs = last_use.registry_src_all().unwrap();
+    let tracker = GlobalCacheTracker::new(&config).unwrap();
+    let srcs = tracker.registry_src_all().unwrap();
     assert_eq!(srcs.len(), 1);
     assert_eq!(srcs[0].0.size, Some(actual_size));
     drop(lock);
@@ -966,8 +1021,8 @@ fn max_size_untracked_src_from_use() {
     let lock = config
         .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
         .unwrap();
-    let last_use = GlobalLastUse::new(&config).unwrap();
-    let srcs = last_use.registry_src_all().unwrap();
+    let tracker = GlobalCacheTracker::new(&config).unwrap();
+    let srcs = tracker.registry_src_all().unwrap();
     assert_eq!(srcs.len(), 1);
     assert_eq!(srcs[0].0.size, None);
     drop(lock);
@@ -1190,7 +1245,9 @@ fn read_only_locking_auto_gc() {
     perms.set_readonly(false);
     std::fs::set_permissions(&cargo_home, perms.clone()).unwrap();
     let config = ConfigBuilder::new().build();
-    GlobalLastUse::db_path(&config).into_path_unlocked().rm_rf();
+    GlobalCacheTracker::db_path(&config)
+        .into_path_unlocked()
+        .rm_rf();
     perms.set_readonly(true);
     std::fs::set_permissions(&cargo_home, perms.clone()).unwrap();
     p.cargo("check -Zgc")
@@ -1254,10 +1311,10 @@ fn clean_syncs_missing_files() {
     let lock = config
         .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
         .unwrap();
-    let last_use = GlobalLastUse::new(&config).unwrap();
-    let crates = last_use.registry_crate_all().unwrap();
+    let tracker = GlobalCacheTracker::new(&config).unwrap();
+    let crates = tracker.registry_crate_all().unwrap();
     assert_eq!(crates.len(), 2);
-    let srcs = last_use.registry_src_all().unwrap();
+    let srcs = tracker.registry_src_all().unwrap();
     assert_eq!(srcs.len(), 2);
     drop(lock);
 
@@ -1280,9 +1337,9 @@ fn clean_syncs_missing_files() {
         .run();
 
     // Verify
-    let crates = last_use.registry_crate_all().unwrap();
+    let crates = tracker.registry_crate_all().unwrap();
     assert_eq!(crates.len(), 1);
-    let srcs = last_use.registry_src_all().unwrap();
+    let srcs = tracker.registry_src_all().unwrap();
     assert_eq!(srcs.len(), 1);
 }
 
@@ -1323,7 +1380,7 @@ fn can_handle_future_schema() -> anyhow::Result<()> {
         .run();
     // Modify the schema to pretend this is done by a future version of cargo.
     let config = ConfigBuilder::new().build();
-    let db_path = GlobalLastUse::db_path(&config).into_path_unlocked();
+    let db_path = GlobalCacheTracker::db_path(&config).into_path_unlocked();
     let conn = rusqlite::Connection::open(&db_path)?;
     let user_version: u32 =
         conn.query_row("SELECT user_version FROM pragma_user_version", [], |row| {

@@ -201,7 +201,7 @@ use tar::Archive;
 use tracing::debug;
 
 use crate::core::dependency::Dependency;
-use crate::core::last_use;
+use crate::core::global_cache_tracker;
 use crate::core::source::MaybePackage;
 use crate::core::{Package, PackageId, QueryKind, Source, SourceId, Summary};
 use crate::sources::PathSource;
@@ -593,7 +593,7 @@ impl<'cfg> RegistrySource<'cfg> {
                 Ok(lock_meta) if lock_meta.v == 1 => {
                     self.config
                         .deferred_global_last_use()?
-                        .mark_registry_src_used(last_use::RegistrySrc {
+                        .mark_registry_src_used(global_cache_tracker::RegistrySrc {
                             encoded_registry_name: self.name.clone(),
                             package_dir: package_dir.clone(),
                             size: None,
@@ -683,7 +683,7 @@ impl<'cfg> RegistrySource<'cfg> {
 
         self.config
             .deferred_global_last_use()?
-            .mark_registry_src_used(last_use::RegistrySrc {
+            .mark_registry_src_used(global_cache_tracker::RegistrySrc {
                 encoded_registry_name: self.name.clone(),
                 package_dir: package_dir.clone(),
                 size: Some(bytes_written),

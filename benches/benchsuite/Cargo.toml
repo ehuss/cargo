@@ -29,5 +29,5 @@ name = "workspace_initialization"
 harness = false
 
 [[bench]]
-name = "last_use"
+name = "global_cache_tracker"
 harness = false

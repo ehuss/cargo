@@ -117,7 +117,7 @@ pub struct CacheLock<'lock> {
 /// The filename for the [`CacheLockMode::DownloadExclusive`] lock.
 const CACHE_LOCK_NAME: &str = ".package-cache";
 /// The filename for the [`CacheLockMode::MutateExclusive`] and
-/// [`CacheLockMode::Share`] lock.
+/// [`CacheLockMode::Shared`] lock.
 const MUTATE_NAME: &str = ".package-cache-mutate";
 
 // Descriptions that are displayed in the "Blocking" message shown to the user.

@@ -23,14 +23,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, trace};
 
-const LAST_USE_FILENAME: &str = ".last-use";
+const GLOBAL_CACHE_FILENAME: &str = ".global-cache";
 
 /// TODO
 type Timestamp = u64;
 
 /// Tracking for the global shared cache (registry files, etc.).
 #[derive(Debug)]
-pub struct GlobalLastUse {
+pub struct GlobalCacheTracker {
     /// Connection to the SQLite database.
     conn: Connection,
     auto_gc_checked_this_session: bool,
@@ -152,32 +152,32 @@ fn migrations() -> Vec<Migration> {
     ]
 }
 
-impl GlobalLastUse {
-    pub fn new(config: &Config) -> CargoResult<GlobalLastUse> {
+impl GlobalCacheTracker {
+    pub fn new(config: &Config) -> CargoResult<GlobalCacheTracker> {
         let mut conn = if config.cli_unstable().gc {
-            let last_use_path = Self::db_path(config);
+            let db_path = Self::db_path(config);
             // A package cache lock is required to ensure only one cargo is
             // accessing at the same time. If there is concurrent access, we
             // want to rely on cargo's own "Blocking" system (which can
             // provide user feedback) rather than blocking inside sqlite
             // (which by default has a short timeout).
-            let last_use_path = config
-                .assert_package_cache_locked(CacheLockMode::DownloadExclusive, &last_use_path);
-            Connection::open(last_use_path)?
+            let db_path =
+                config.assert_package_cache_locked(CacheLockMode::DownloadExclusive, &db_path);
+            Connection::open(db_path)?
         } else {
             // To simplify things (so there aren't checks everywhere for being
             // enabled), just process everything in memory.
             Connection::open_in_memory()?
         };
         sqlite::migrate(&mut conn, &migrations())?;
-        Ok(GlobalLastUse {
+        Ok(GlobalCacheTracker {
             conn,
             auto_gc_checked_this_session: false,
         })
     }
 
     pub fn db_path(config: &Config) -> Filesystem {
-        config.home().join(LAST_USE_FILENAME)
+        config.home().join(GLOBAL_CACHE_FILENAME)
     }
 
     /// Given an encoded registry name, returns its ID.
@@ -928,12 +928,12 @@ impl DeferredGlobalLastUse {
     /// Saves all of the deferred information to the database.
     ///
     /// This will also clear the state of self.
-    pub fn save(&mut self, last_use: &mut GlobalLastUse) -> CargoResult<()> {
+    pub fn save(&mut self, tracker: &mut GlobalCacheTracker) -> CargoResult<()> {
         trace!("saving last-use data");
         if self.is_empty() {
             return Ok(());
         }
-        let tx = last_use.conn.transaction()?;
+        let tx = tracker.conn.transaction()?;
         // These must run before the ones that refer to their IDs.
         self.insert_registry_index_from_cache(&tx)?;
         self.insert_git_db_from_cache(&tx)?;
@@ -973,8 +973,8 @@ impl DeferredGlobalLastUse {
     }
 
     fn save_with_config(&mut self, config: &Config) -> CargoResult<()> {
-        let mut last_use = config.global_last_use()?;
-        self.save(&mut last_use)
+        let mut tracker = config.global_cache_tracker()?;
+        self.save(&mut tracker)
     }
 
     fn insert_registry_index_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
@@ -1105,7 +1105,7 @@ impl DeferredGlobalLastUse {
         match self.registry_keys.get(encoded_registry_name) {
             Some(i) => Ok(*i),
             None => {
-                let id = GlobalLastUse::registry_id_from_name(conn, encoded_registry_name)?;
+                let id = GlobalCacheTracker::registry_id_from_name(conn, encoded_registry_name)?;
                 self.registry_keys
                     .insert(encoded_registry_name.to_string(), id);
                 Ok(id)

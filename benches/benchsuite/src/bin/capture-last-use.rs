@@ -1,16 +1,13 @@
-use cargo::core::last_use::{self, DeferredGlobalLastUse, GlobalLastUse};
+use cargo::core::global_cache_tracker::{self, DeferredGlobalLastUse, GlobalCacheTracker};
 use cargo::util::cache_lock::CacheLockMode;
 use cargo::Config;
 use std::fs;
 use std::path::Path;
 
 fn main() {
+    // Set up config.
     let shell = cargo::core::Shell::new();
-    let homedir = Path::new(env!("CARGO_MANIFEST_DIR")).join("last-use");
-    let last_use_db = homedir.join(".last-use"); // TODO
-    if last_use_db.exists() {
-        fs::remove_file(&last_use_db).unwrap();
-    }
+    let homedir = Path::new(env!("CARGO_MANIFEST_DIR")).join("global-cache-tracker");
     let cwd = homedir.clone();
     let mut config = Config::new(shell, cwd, homedir.clone());
     config
@@ -26,11 +23,16 @@ fn main() {
             &[],
         )
         .unwrap();
+    let db_path = GlobalCacheTracker::db_path(&config).into_path_unlocked();
+    if db_path.exists() {
+        fs::remove_file(&db_path).unwrap();
+    }
+
     let _lock = config
         .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
         .unwrap();
     let mut deferred = DeferredGlobalLastUse::new();
-    let mut last_use = GlobalLastUse::new(&config).unwrap();
+    let mut tracker = GlobalCacheTracker::new(&config).unwrap();
 
     // ~/.cargo/registry/cache/github.com-1ecc6299db9ec823
     let real_home = cargo::util::homedir(&std::env::current_dir().unwrap()).unwrap();
@@ -38,7 +40,7 @@ fn main() {
     // let index_dir = real_home.join("registry/index");
     // for dir_ent in fs::read_dir(index_dir).unwrap() {
     //     let registry = dir_ent.unwrap();
-    //     last_use.mark_used(LastUseKind::RegistryIndex {
+    //     tracker.mark_used(LastUseKind::RegistryIndex {
     //         encoded_registry_name: registry.file_name().to_string_lossy().into_owned(),
     //     });
     // }
@@ -51,7 +53,7 @@ fn main() {
             let krate = krate.unwrap();
             let meta = krate.metadata().unwrap();
             deferred.mark_registry_crate_used_stamp(
-                last_use::RegistryCrate {
+                global_cache_tracker::RegistryCrate {
                     encoded_registry_name: encoded_registry_name.clone(),
                     crate_filename: krate.file_name().to_string_lossy().into_owned(),
                     size: meta.len(),
@@ -69,7 +71,7 @@ fn main() {
             let krate = krate.unwrap();
             let meta = krate.metadata().unwrap();
             deferred.mark_registry_src_used_stamp(
-                last_use::RegistrySrc {
+                global_cache_tracker::RegistrySrc {
                     encoded_registry_name: encoded_registry_name.clone(),
                     package_dir: krate.file_name().to_string_lossy().into_owned(),
                     size: Some(cargo_util::paths::du(&krate.path()).unwrap()),
@@ -82,7 +84,7 @@ fn main() {
     // let git_db_dir = real_home.join("git/db");
     // for dir_ent in fs::read_dir(git_db_dir).unwrap() {
     //     let git_source = dir_ent.unwrap();
-    //     last_use.mark_used(LastUseKind::GitDb {
+    //     tracker.mark_used(LastUseKind::GitDb {
     //         encoded_git_name: git_source.file_name().to_string_lossy().into_owned(),
     //     });
     // }
@@ -95,7 +97,7 @@ fn main() {
             let co = co.unwrap();
             let meta = co.metadata().unwrap();
             deferred.mark_git_checkout_used_stamp(
-                last_use::GitCheckout {
+                global_cache_tracker::GitCheckout {
                     encoded_git_name: encoded_git_name.clone(),
                     short_name: co.file_name().to_string_lossy().into_owned(),
                 },
@@ -104,7 +106,8 @@ fn main() {
         }
     }
 
-    deferred.save(&mut last_use).unwrap();
-    fs::rename(&last_use_db, homedir.join("last-use-sample")).unwrap();
+    deferred.save(&mut tracker).unwrap();
+    fs::rename(&db_path, homedir.join("global-cache-sample")).unwrap();
+    // Clean up the lock file.
     fs::remove_file(homedir.join(".package-cache")).unwrap();
 }

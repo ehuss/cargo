@@ -1,6 +1,6 @@
 //! See [GitSource].
 
-use crate::core::last_use;
+use crate::core::global_cache_tracker;
 use crate::core::source::{MaybePackage, QueryKind, Source, SourceId};
 use crate::core::GitReference;
 use crate::core::{Dependency, Package, PackageId, Summary};
@@ -307,7 +307,7 @@ impl<'cfg> Source for GitSource<'cfg> {
             .clone();
         self.config
             .deferred_global_last_use()?
-            .mark_git_checkout_used(last_use::GitCheckout {
+            .mark_git_checkout_used(global_cache_tracker::GitCheckout {
                 encoded_git_name: self.ident.clone(),
                 short_name,
             });
