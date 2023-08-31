@@ -25,7 +25,9 @@ use tracing::{debug, trace};
 
 const GLOBAL_CACHE_FILENAME: &str = ".global-cache";
 
-/// TODO
+/// Type for timestamps as stored in the database.
+///
+/// These are seconds since the Unix epoch.
 type Timestamp = u64;
 
 /// Tracking for the global shared cache (registry files, etc.).
@@ -102,6 +104,7 @@ fn migrations() -> Vec<Migration> {
                 timestamp INTEGER NOT NULL
             )",
         ),
+        // .crate files
         basic_migration(
             "CREATE TABLE registry_crate (
                 registry_id INTEGER NOT NULL,
@@ -111,6 +114,7 @@ fn migrations() -> Vec<Migration> {
                 PRIMARY KEY (registry_id, name)
              )",
         ),
+        // Extracted src directories
         basic_migration(
             "CREATE TABLE registry_src (
                 registry_id INTEGER NOT NULL,
@@ -120,6 +124,7 @@ fn migrations() -> Vec<Migration> {
                 PRIMARY KEY (registry_id, name)
              )",
         ),
+        // Git db directories
         basic_migration(
             "CREATE TABLE git_db (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,6 +132,7 @@ fn migrations() -> Vec<Migration> {
                 timestamp INTEGER NOT NULL
              )",
         ),
+        // Git checkout directories
         basic_migration(
             "CREATE TABLE git_checkout (
                 git_id INTEGER NOT NULL,
@@ -135,13 +141,15 @@ fn migrations() -> Vec<Migration> {
                 PRIMARY KEY (git_id, name)
              )",
         ),
+        // This is a general-purpose single-row table that can store arbitrary
+        // data. Feel free to add columns (with ALTER TABLE) if necessary.
         basic_migration(
             "CREATE TABLE global_data (
                 last_auto_gc INTEGER NOT NULL
             )",
         ),
-        // TODO: Can use a function if I decide to keep with UNIX timestamps,
-        // and use basic_migration instead.
+        // last_auto_gc tracks the last time auto-gc was run. Prime it with
+        // the current time.
         Box::new(|conn| {
             conn.execute(
                 "INSERT INTO global_data (last_auto_gc) VALUES (?1)",
@@ -1129,15 +1137,10 @@ impl DeferredGlobalLastUse {
 }
 
 fn to_timestamp(t: &SystemTime) -> Timestamp {
-    // This offsets from January 1, 2015 12:00:00 AM to generate smaller integers.
     t.duration_since(SystemTime::UNIX_EPOCH)
         .expect("invalid clock")
         .as_secs()
 }
-
-// fn from_timestamp(t: Timestamp) -> SystemTime {
-//     SystemTime::UNIX_EPOCH + Duration::from_secs(t)
-// }
 
 fn now() -> Timestamp {
     match std::env::var("__CARGO_TEST_LAST_USE_NOW") {

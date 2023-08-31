@@ -1,4 +1,10 @@
 //! Tests for last-use tracking and auto-gc.
+//!
+//! Cargo supports an environment variable called `__CARGO_TEST_LAST_USE_NOW`
+//! to have cargo pretend that the current time is the given time (in seconds
+//! since the unix epoch). This is used throughout these tests to simulate
+//! what happens when time passes. The [`days_ago_unix`] and
+//! [`months_ago_unix`] functions help with setting this value.
 
 use super::config::ConfigBuilder;
 use cargo::core::global_cache_tracker::{self, DeferredGlobalLastUse, GlobalCacheTracker};
@@ -65,8 +71,9 @@ fn days_ago(n: u64) -> SystemTime {
     SystemTime::now() - Duration::from_secs(60 * 60 * 24 * n)
 }
 
+/// Helper for simulating running cargo in the past. Use with the
+/// __CARGO_TEST_LAST_USE_NOW environment variable.
 fn days_ago_unix(n: u64) -> String {
-    // TODO: Export functions for working with timestamps.
     days_ago(n)
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
@@ -74,6 +81,8 @@ fn days_ago_unix(n: u64) -> String {
         .to_string()
 }
 
+/// Helper for simulating running cargo in the past. Use with the
+/// __CARGO_TEST_LAST_USE_NOW environment variable.
 fn months_ago_unix(n: u64) -> String {
     days_ago_unix(n * 30)
 }
@@ -389,9 +398,9 @@ fn frequency() {
     p.change_file(
         ".cargo/config.toml",
         r#"
-                [gc.auto]
-                frequency = "never"
-            "#,
+            [gc.auto]
+            frequency = "never"
+        "#,
     );
     // Populate data in the past.
     p.cargo("check -Zgc")
