@@ -69,19 +69,31 @@ pub struct DeferredGlobalLastUse {
     /// is the `id` in the `git_db` table.
     git_keys: HashMap<InternedString, i64>,
 
+    /// New registry index entries to insert.
     registry_index_timestamps: HashMap<RegistryIndex, Timestamp>,
+    /// New registry `.crate` entries to insert.
     registry_crate_timestamps: HashMap<RegistryCrate, Timestamp>,
+    /// New registry src directory entries to insert.
     registry_src_timestamps: HashMap<RegistrySrc, Timestamp>,
+    /// New git db entries to insert.
     git_db_timestamps: HashMap<GitDb, Timestamp>,
+    /// New git checkout entries to insert.
     git_checkout_timestamps: HashMap<GitCheckout, Timestamp>,
+    /// This is used so that a warning about failing to update the database is
+    /// only displayed once.
     save_err_has_warned: bool,
+    /// The current time, used to improve performance to avoid accessing the
+    /// clock hundreds of times.
+    now: Timestamp,
 }
 
+/// The key for a registry index entry stored in the database.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct RegistryIndex {
     pub encoded_registry_name: InternedString,
 }
 
+/// The key for a registry `.crate` entry stored in the database.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct RegistryCrate {
     pub encoded_registry_name: InternedString,
@@ -89,6 +101,7 @@ pub struct RegistryCrate {
     pub size: u64,
 }
 
+/// The key for a registry src directory entry stored in the database.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct RegistrySrc {
     pub encoded_registry_name: InternedString,
@@ -96,17 +109,24 @@ pub struct RegistrySrc {
     pub size: Option<u64>,
 }
 
+/// The key for a git db entry stored in the database.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct GitDb {
     pub encoded_git_name: InternedString,
 }
 
+/// The key for a git checkout entry stored in the database.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct GitCheckout {
     pub encoded_git_name: InternedString,
     pub short_name: InternedString,
 }
 
+/// Migrations which initialize the database, and can be used to evolve it over time.
+///
+/// See [`Migration`] for more detail.
+///
+/// **Be sure to not change the order or entries here!**
 fn migrations() -> Vec<Migration> {
     vec![
         // registry_index tracks the overall usage of an index cache, and tracks a
@@ -162,8 +182,9 @@ fn migrations() -> Vec<Migration> {
                 last_auto_gc INTEGER NOT NULL
             )",
         ),
-        // last_auto_gc tracks the last time auto-gc was run. Prime it with
-        // the current time.
+        // last_auto_gc tracks the last time auto-gc was run (so that it only
+        // runs roughly once a day for performance reasons). Prime it with the
+        // current time to establish a baseline.
         Box::new(|conn| {
             conn.execute(
                 "INSERT INTO global_data (last_auto_gc) VALUES (?1)",
@@ -198,6 +219,7 @@ impl GlobalCacheTracker {
         })
     }
 
+    /// The path to the database.
     pub fn db_path(config: &Config) -> Filesystem {
         config.home().join(GLOBAL_CACHE_FILENAME)
     }
@@ -862,6 +884,7 @@ impl DeferredGlobalLastUse {
             git_db_timestamps: HashMap::new(),
             git_checkout_timestamps: HashMap::new(),
             save_err_has_warned: false,
+            now: now(),
         }
     }
 
@@ -902,7 +925,7 @@ impl DeferredGlobalLastUse {
         registry_index: RegistryIndex,
         timestamp: Option<&SystemTime>,
     ) {
-        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
+        let timestamp = timestamp.map_or(self.now, |t| to_timestamp(t));
         self.registry_index_timestamps
             .insert(registry_index, timestamp);
     }
@@ -912,9 +935,9 @@ impl DeferredGlobalLastUse {
         registry_crate: RegistryCrate,
         timestamp: Option<&SystemTime>,
     ) {
-        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
+        let timestamp = timestamp.map_or(self.now, |t| to_timestamp(t));
         let index = RegistryIndex {
-            encoded_registry_name: registry_crate.encoded_registry_name.clone(),
+            encoded_registry_name: registry_crate.encoded_registry_name,
         };
         self.registry_index_timestamps.insert(index, timestamp);
         self.registry_crate_timestamps
@@ -926,9 +949,9 @@ impl DeferredGlobalLastUse {
         registry_src: RegistrySrc,
         timestamp: Option<&SystemTime>,
     ) {
-        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
+        let timestamp = timestamp.map_or(self.now, |t| to_timestamp(t));
         let index = RegistryIndex {
-            encoded_registry_name: registry_src.encoded_registry_name.clone(),
+            encoded_registry_name: registry_src.encoded_registry_name,
         };
         self.registry_index_timestamps.insert(index, timestamp);
         self.registry_src_timestamps.insert(registry_src, timestamp);
@@ -939,9 +962,9 @@ impl DeferredGlobalLastUse {
         git_checkout: GitCheckout,
         timestamp: Option<&SystemTime>,
     ) {
-        let timestamp = timestamp.map_or_else(|| now(), |t| to_timestamp(t));
+        let timestamp = timestamp.map_or(self.now, |t| to_timestamp(t));
         let db = GitDb {
-            encoded_git_name: git_checkout.encoded_git_name.clone(),
+            encoded_git_name: git_checkout.encoded_git_name,
         };
         self.git_db_timestamps.insert(db, timestamp);
         self.git_checkout_timestamps.insert(git_checkout, timestamp);
