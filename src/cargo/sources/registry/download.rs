@@ -3,6 +3,7 @@
 //! [`HttpRegistry`]: super::http_remote::HttpRegistry
 //! [`RemoteRegistry`]: super::remote::RemoteRegistry
 
+use crate::util::interning::InternedString;
 use anyhow::Context;
 use cargo_credential::Operation;
 use cargo_util::registry::make_dep_path;
@@ -35,7 +36,7 @@ const CHECKSUM_TEMPLATE: &str = "{sha256-checksum}";
 pub(super) fn download(
     cache_path: &Filesystem,
     config: &Config,
-    encoded_registry_name: String,
+    encoded_registry_name: InternedString,
     pkg: PackageId,
     checksum: &str,
     registry_config: RegistryConfig,
@@ -55,7 +56,7 @@ pub(super) fn download(
             config.deferred_global_last_use()?.mark_registry_crate_used(
                 global_cache_tracker::RegistryCrate {
                     encoded_registry_name,
-                    crate_filename: pkg.tarball_name(),
+                    crate_filename: pkg.tarball_name().into(),
                     size: meta.len(),
                 },
             );
@@ -114,7 +115,7 @@ pub(super) fn download(
 pub(super) fn finish_download(
     cache_path: &Filesystem,
     config: &Config,
-    encoded_registry_name: String,
+    encoded_registry_name: InternedString,
     pkg: PackageId,
     checksum: &str,
     data: &[u8],
@@ -127,7 +128,7 @@ pub(super) fn finish_download(
     config.deferred_global_last_use()?.mark_registry_crate_used(
         global_cache_tracker::RegistryCrate {
             encoded_registry_name,
-            crate_filename: pkg.tarball_name(),
+            crate_filename: pkg.tarball_name().into(),
             size: data.len() as u64,
         },
     );

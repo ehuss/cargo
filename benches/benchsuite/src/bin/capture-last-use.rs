@@ -1,5 +1,6 @@
 use cargo::core::global_cache_tracker::{self, DeferredGlobalLastUse, GlobalCacheTracker};
 use cargo::util::cache_lock::CacheLockMode;
+use cargo::util::interning::InternedString;
 use cargo::Config;
 use std::fs;
 use std::path::Path;
@@ -48,14 +49,14 @@ fn main() {
     let cache_dir = real_home.join("registry/cache");
     for dir_ent in fs::read_dir(cache_dir).unwrap() {
         let registry = dir_ent.unwrap();
-        let encoded_registry_name = registry.file_name().to_string_lossy().into_owned();
+        let encoded_registry_name = InternedString::new(&registry.file_name().to_string_lossy());
         for krate in fs::read_dir(registry.path()).unwrap() {
             let krate = krate.unwrap();
             let meta = krate.metadata().unwrap();
             deferred.mark_registry_crate_used_stamp(
                 global_cache_tracker::RegistryCrate {
-                    encoded_registry_name: encoded_registry_name.clone(),
-                    crate_filename: krate.file_name().to_string_lossy().into_owned(),
+                    encoded_registry_name,
+                    crate_filename: krate.file_name().to_string_lossy().as_ref().into(),
                     size: meta.len(),
                 },
                 Some(&meta.modified().unwrap()),
@@ -66,14 +67,14 @@ fn main() {
     let cache_dir = real_home.join("registry/src");
     for dir_ent in fs::read_dir(cache_dir).unwrap() {
         let registry = dir_ent.unwrap();
-        let encoded_registry_name = registry.file_name().to_string_lossy().into_owned();
+        let encoded_registry_name = InternedString::new(&registry.file_name().to_string_lossy());
         for krate in fs::read_dir(registry.path()).unwrap() {
             let krate = krate.unwrap();
             let meta = krate.metadata().unwrap();
             deferred.mark_registry_src_used_stamp(
                 global_cache_tracker::RegistrySrc {
-                    encoded_registry_name: encoded_registry_name.clone(),
-                    package_dir: krate.file_name().to_string_lossy().into_owned(),
+                    encoded_registry_name,
+                    package_dir: krate.file_name().to_string_lossy().as_ref().into(),
                     size: Some(cargo_util::paths::du(&krate.path()).unwrap()),
                 },
                 Some(&meta.modified().unwrap()),
@@ -81,6 +82,7 @@ fn main() {
         }
     }
 
+    // TODO: What's going on here?
     // let git_db_dir = real_home.join("git/db");
     // for dir_ent in fs::read_dir(git_db_dir).unwrap() {
     //     let git_source = dir_ent.unwrap();
@@ -92,14 +94,14 @@ fn main() {
     let git_co_dir = real_home.join("git/checkouts");
     for dir_ent in fs::read_dir(git_co_dir).unwrap() {
         let git_source = dir_ent.unwrap();
-        let encoded_git_name = git_source.file_name().to_string_lossy().into_owned();
+        let encoded_git_name = InternedString::new(&git_source.file_name().to_string_lossy());
         for co in fs::read_dir(git_source.path()).unwrap() {
             let co = co.unwrap();
             let meta = co.metadata().unwrap();
             deferred.mark_git_checkout_used_stamp(
                 global_cache_tracker::GitCheckout {
-                    encoded_git_name: encoded_git_name.clone(),
-                    short_name: co.file_name().to_string_lossy().into_owned(),
+                    encoded_git_name,
+                    short_name: co.file_name().to_string_lossy().as_ref().into(),
                 },
                 Some(&meta.modified().unwrap()),
             );

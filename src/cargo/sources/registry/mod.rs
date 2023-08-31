@@ -183,6 +183,7 @@
 //!
 //! [`IndexPackage`]: index::IndexPackage
 
+use crate::util::interning::InternedString;
 use std::collections::HashSet;
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -239,7 +240,7 @@ struct LockMetadata {
 ///
 /// For general concepts of registries, see the [module-level documentation](crate::sources::registry).
 pub struct RegistrySource<'cfg> {
-    name: String,
+    name: InternedString,
     /// The unique identifier of this source.
     source_id: SourceId,
     /// The path where crate files are extracted (`$CARGO_HOME/registry/src/$REG-HASH`).
@@ -515,7 +516,7 @@ impl<'cfg> RegistrySource<'cfg> {
         yanked_whitelist: &HashSet<PackageId>,
     ) -> RegistrySource<'cfg> {
         RegistrySource {
-            name: name.to_string(),
+            name: name.into(),
             src_path: config.registry_source_path().join(name),
             config,
             source_id,
@@ -594,8 +595,8 @@ impl<'cfg> RegistrySource<'cfg> {
                     self.config
                         .deferred_global_last_use()?
                         .mark_registry_src_used(global_cache_tracker::RegistrySrc {
-                            encoded_registry_name: self.name.clone(),
-                            package_dir: package_dir.clone(),
+                            encoded_registry_name: self.name,
+                            package_dir: package_dir.into(),
                             size: None,
                         });
                     return Ok(unpack_dir.to_path_buf());
@@ -684,8 +685,8 @@ impl<'cfg> RegistrySource<'cfg> {
         self.config
             .deferred_global_last_use()?
             .mark_registry_src_used(global_cache_tracker::RegistrySrc {
-                encoded_registry_name: self.name.clone(),
-                package_dir: package_dir.clone(),
+                encoded_registry_name: self.name,
+                package_dir: package_dir.into(),
                 size: Some(bytes_written),
             });
 

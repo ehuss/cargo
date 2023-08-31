@@ -9,6 +9,7 @@
 use super::config::ConfigBuilder;
 use cargo::core::global_cache_tracker::{self, DeferredGlobalLastUse, GlobalCacheTracker};
 use cargo::util::cache_lock::CacheLockMode;
+use cargo::util::interning::InternedString;
 use cargo::Config;
 use cargo_test_support::paths::{self, CargoPathExt};
 use cargo_test_support::registry::{Package, RegistryBuilder};
@@ -107,19 +108,19 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
     src_dir.rm_rf();
     src_dir.mkdir_p();
     let mut create = |name: &str, age, crate_size: u64, src_size: u64| {
-        let crate_filename = format!("{name}.crate");
+        let crate_filename = InternedString::new(&format!("{name}.crate"));
         deferred.mark_registry_crate_used_stamp(
             global_cache_tracker::RegistryCrate {
-                encoded_registry_name: "example.com-a6c4a5adcb232b9a".to_string(),
-                crate_filename: crate_filename.clone(),
+                encoded_registry_name: "example.com-a6c4a5adcb232b9a".into(),
+                crate_filename,
                 size: crate_size,
             },
             Some(&days_ago(age)),
         );
         deferred.mark_registry_src_used_stamp(
             global_cache_tracker::RegistrySrc {
-                encoded_registry_name: "example.com-a6c4a5adcb232b9a".to_string(),
-                package_dir: name.to_string(),
+                encoded_registry_name: "example.com-a6c4a5adcb232b9a".into(),
+                package_dir: name.into(),
                 size: Some(src_size),
             },
             Some(&days_ago(age)),
@@ -223,18 +224,18 @@ fn implies_source() {
     let mut tracker = GlobalCacheTracker::new(&config).unwrap();
 
     deferred.mark_registry_crate_used(global_cache_tracker::RegistryCrate {
-        encoded_registry_name: "example.com-a6c4a5adcb232b9a".to_string(),
-        crate_filename: "regex-1.8.4.crate".to_string(),
+        encoded_registry_name: "example.com-a6c4a5adcb232b9a".into(),
+        crate_filename: "regex-1.8.4.crate".into(),
         size: 123,
     });
     deferred.mark_registry_src_used(global_cache_tracker::RegistrySrc {
-        encoded_registry_name: "index.crates.io-6f17d22bba15001f".to_string(),
-        package_dir: "rand-0.8.5".to_string(),
+        encoded_registry_name: "index.crates.io-6f17d22bba15001f".into(),
+        package_dir: "rand-0.8.5".into(),
         size: None,
     });
     deferred.mark_git_checkout_used(global_cache_tracker::GitCheckout {
-        encoded_git_name: "cargo-e7ff1db891893a9e".to_string(),
-        short_name: "f0a4ee0".to_string(),
+        encoded_git_name: "cargo-e7ff1db891893a9e".into(),
+        short_name: "f0a4ee0".into(),
     });
     deferred.save(&mut tracker).unwrap();
 

@@ -1,5 +1,6 @@
 use cargo::core::global_cache_tracker::{self, DeferredGlobalLastUse, GlobalCacheTracker};
 use cargo::util::cache_lock::CacheLockMode;
+use cargo::util::interning::InternedString;
 use cargo::util::Config;
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::fs;
@@ -601,7 +602,7 @@ fn global_tracker_update(c: &mut Criterion) {
 
     // FIXME: This shouldn't be hard-coded, and needs to be kept in sync with
     // the captured sample.
-    let crates_io = String::from("github.com-1ecc6299db9ec823");
+    let crates_io = InternedString::new("github.com-1ecc6299db9ec823");
 
     let mut group = c.benchmark_group("global_tracker_update");
     for size in [1, 10, 100, 500] {
@@ -616,13 +617,13 @@ fn global_tracker_update(c: &mut Criterion) {
             b.iter(|| {
                 for name in &RANDOM_SAMPLE[..size] {
                     deferred.mark_registry_crate_used(global_cache_tracker::RegistryCrate {
-                        encoded_registry_name: crates_io.clone(),
-                        crate_filename: format!("{}.crate", name),
+                        encoded_registry_name: crates_io,
+                        crate_filename: format!("{}.crate", name).into(),
                         size: 12345678,
                     });
                     deferred.mark_registry_src_used(global_cache_tracker::RegistrySrc {
-                        encoded_registry_name: crates_io.clone(),
-                        package_dir: name.to_string(),
+                        encoded_registry_name: crates_io,
+                        package_dir: InternedString::new(name),
                         size: Some(12345678),
                     });
                 }

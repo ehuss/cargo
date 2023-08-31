@@ -7,6 +7,7 @@ use crate::sources::registry::MaybeLock;
 use crate::sources::registry::{LoadResponse, RegistryConfig, RegistryData};
 use crate::util::cache_lock::CacheLockMode;
 use crate::util::errors::{CargoResult, HttpNotSuccessful};
+use crate::util::interning::InternedString;
 use crate::util::network::http::http_handle;
 use crate::util::network::retry::{Retry, RetryResult};
 use crate::util::network::sleep::SleepTracker;
@@ -53,7 +54,7 @@ const UNKNOWN: &'static str = "Unknown";
 ///
 /// [RFC 2789]: https://github.com/rust-lang/rfcs/pull/2789
 pub struct HttpRegistry<'cfg> {
-    name: String,
+    name: InternedString,
     /// Path to the registry index (`$CARGO_HOME/registry/index/$REG-HASH`).
     ///
     /// To be fair, `HttpRegistry` doesn't store the registry index it
@@ -201,7 +202,7 @@ impl<'cfg> HttpRegistry<'cfg> {
             .expect("a url with the sparse+ stripped should still be valid");
 
         Ok(HttpRegistry {
-            name: name.to_string(),
+            name: name.into(),
             index_path: config.registry_index_path().join(name),
             cache_path: config.registry_cache_path().join(name),
             source_id,
@@ -460,7 +461,7 @@ impl<'cfg> RegistryData for HttpRegistry<'cfg> {
         self.config
             .deferred_global_last_use()?
             .mark_registry_index_used(global_cache_tracker::RegistryIndex {
-                encoded_registry_name: self.name.clone(),
+                encoded_registry_name: self.name,
             });
         Ok(())
     }

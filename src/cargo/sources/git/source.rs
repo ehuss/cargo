@@ -9,6 +9,7 @@ use crate::sources::PathSource;
 use crate::util::cache_lock::CacheLockMode;
 use crate::util::errors::CargoResult;
 use crate::util::hex::short_hash;
+use crate::util::interning::InternedString;
 use crate::util::Config;
 use anyhow::Context;
 use cargo_util::paths::exclude_from_backups_and_indexing;
@@ -72,10 +73,10 @@ pub struct GitSource<'cfg> {
     source_id: SourceId,
     /// The underlying path source to discover packages inside the Git repository.
     path_source: Option<PathSource<'cfg>>,
-    short_id: Option<String>,
+    short_id: Option<InternedString>,
     /// The identifer of this source for Cargo's Git cache directory.
     /// See [`ident`] for more.
-    ident: String,
+    ident: InternedString,
     config: &'cfg Config,
     /// Disables status messages.
     quiet: bool,
@@ -110,7 +111,7 @@ impl<'cfg> GitSource<'cfg> {
             source_id,
             path_source: None,
             short_id: None,
-            ident,
+            ident: ident.into(),
             config,
             quiet: false,
         };
@@ -135,16 +136,11 @@ impl<'cfg> GitSource<'cfg> {
     }
 
     fn mark_used(&self) -> CargoResult<()> {
-        let short_name = self
-            .short_id
-            .as_ref()
-            .expect("update before download")
-            .clone();
         self.config
             .deferred_global_last_use()?
             .mark_git_checkout_used(global_cache_tracker::GitCheckout {
-                encoded_git_name: self.ident.clone(),
-                short_name,
+                encoded_git_name: self.ident,
+                short_name: self.short_id.expect("update before download"),
             });
         Ok(())
     }
@@ -310,7 +306,7 @@ impl<'cfg> Source for GitSource<'cfg> {
         let path_source = PathSource::new_recursive(&checkout_path, source_id, self.config);
 
         self.path_source = Some(path_source);
-        self.short_id = Some(short_id.as_str().to_string());
+        self.short_id = Some(short_id.as_str().into());
         self.locked_rev = Some(actual_rev);
         self.path_source.as_mut().unwrap().update()?;
 

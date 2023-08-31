@@ -13,15 +13,29 @@ use crate::core::gc::GcOpts;
 use crate::core::Verbosity;
 use crate::ops::{CleanContext, CleaningFolderBar};
 use crate::util::cache_lock::CacheLockMode;
+use crate::util::interning::InternedString;
 use crate::util::sqlite::{self, basic_migration, Migration};
 use crate::util::{Filesystem, Progress, ProgressStyle};
 use crate::{CargoResult, Config};
 use anyhow::Context;
+use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput};
 use rusqlite::{params, Connection, ErrorCode};
 use std::collections::{hash_map, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, trace};
+
+impl FromSql for InternedString {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> Result<Self, FromSqlError> {
+        value.as_str().map(InternedString::new)
+    }
+}
+
+impl ToSql for InternedString {
+    fn to_sql(&self) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
+        Ok(ToSqlOutput::from(self.as_str()))
+    }
+}
 
 const GLOBAL_CACHE_FILENAME: &str = ".global-cache";
 
@@ -48,12 +62,12 @@ pub struct DeferredGlobalLastUse {
     ///
     /// The key is the registry name (which is its directory name) and the
     /// value is the `id` in the `registry_index` table.
-    registry_keys: HashMap<String, i64>,
+    registry_keys: HashMap<InternedString, i64>,
     /// Cache of git keys, used for faster fetching.
     ///
     /// The key is the git db name (which is its directory name) and the value
     /// is the `id` in the `git_db` table.
-    git_keys: HashMap<String, i64>,
+    git_keys: HashMap<InternedString, i64>,
 
     registry_index_timestamps: HashMap<RegistryIndex, Timestamp>,
     registry_crate_timestamps: HashMap<RegistryCrate, Timestamp>,
@@ -65,32 +79,32 @@ pub struct DeferredGlobalLastUse {
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct RegistryIndex {
-    pub encoded_registry_name: String,
+    pub encoded_registry_name: InternedString,
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct RegistryCrate {
-    pub encoded_registry_name: String,
-    pub crate_filename: String,
+    pub encoded_registry_name: InternedString,
+    pub crate_filename: InternedString,
     pub size: u64,
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct RegistrySrc {
-    pub encoded_registry_name: String,
-    pub package_dir: String,
+    pub encoded_registry_name: InternedString,
+    pub package_dir: InternedString,
     pub size: Option<u64>,
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct GitDb {
-    pub encoded_git_name: String,
+    pub encoded_git_name: InternedString,
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct GitCheckout {
-    pub encoded_git_name: String,
-    pub short_name: String,
+    pub encoded_git_name: InternedString,
+    pub short_name: InternedString,
 }
 
 fn migrations() -> Vec<Migration> {
@@ -992,7 +1006,7 @@ impl DeferredGlobalLastUse {
                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
                 RETURNING id",
         )?;
-        for (index, timestamp) in self.registry_index_timestamps.drain() {
+        for (index, timestamp) in std::mem::take(&mut self.registry_index_timestamps) {
             trace!("insert registry index {index:?} {timestamp}");
             let id = stmt.query_row(params![index.encoded_registry_name, timestamp], |row| {
                 row.get(0)
@@ -1020,7 +1034,7 @@ impl DeferredGlobalLastUse {
                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
                 RETURNING id",
         )?;
-        for (git_db, timestamp) in self.git_db_timestamps.drain() {
+        for (git_db, timestamp) in std::mem::take(&mut self.git_db_timestamps) {
             trace!("insert git db used {git_db:?} {timestamp}");
             let id = stmt.query_row(params![git_db.encoded_git_name, timestamp], |row| {
                 row.get(0)
@@ -1037,14 +1051,10 @@ impl DeferredGlobalLastUse {
     }
 
     fn insert_registry_crate_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
-        let mut registry_crate_timestamps = HashMap::new();
-        std::mem::swap(
-            &mut self.registry_crate_timestamps,
-            &mut registry_crate_timestamps,
-        );
+        let registry_crate_timestamps = std::mem::take(&mut self.registry_crate_timestamps);
         for (registry_crate, timestamp) in registry_crate_timestamps {
             trace!("insert registry crate {registry_crate:?} {timestamp}");
-            let registry_id = self.registry_id(conn, &registry_crate.encoded_registry_name)?;
+            let registry_id = self.registry_id(conn, registry_crate.encoded_registry_name)?;
             let mut stmt = conn.prepare_cached(
                 "INSERT INTO registry_crate (registry_id, name, size, timestamp)
                  VALUES (?1, ?2, ?3, ?4)
@@ -1061,14 +1071,10 @@ impl DeferredGlobalLastUse {
     }
 
     fn insert_registry_src_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
-        let mut registry_src_timestamps = HashMap::new();
-        std::mem::swap(
-            &mut self.registry_src_timestamps,
-            &mut registry_src_timestamps,
-        );
+        let registry_src_timestamps = std::mem::take(&mut self.registry_src_timestamps);
         for (registry_src, timestamp) in registry_src_timestamps {
             trace!("insert registry src {registry_src:?} {timestamp}");
-            let registry_id = self.registry_id(conn, &registry_src.encoded_registry_name)?;
+            let registry_id = self.registry_id(conn, registry_src.encoded_registry_name)?;
             let mut stmt = conn.prepare_cached(
                 "INSERT INTO registry_src (registry_id, name, size, timestamp)
                  VALUES (?1, ?2, ?3, ?4)
@@ -1090,13 +1096,9 @@ impl DeferredGlobalLastUse {
     }
 
     fn insert_git_checkout_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
-        let mut git_checkout_timestamps = HashMap::new();
-        std::mem::swap(
-            &mut self.git_checkout_timestamps,
-            &mut git_checkout_timestamps,
-        );
+        let git_checkout_timestamps = std::mem::take(&mut self.git_checkout_timestamps);
         for (git_checkout, timestamp) in git_checkout_timestamps {
-            let git_id = self.git_id(conn, &git_checkout.encoded_git_name)?;
+            let git_id = self.git_id(conn, git_checkout.encoded_git_name)?;
             let mut stmt = conn.prepare_cached(
                 "INSERT INTO git_checkout (git_id, name, timestamp)
                  VALUES (?1, ?2, ?3)
@@ -1108,20 +1110,23 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
-    fn registry_id(&mut self, conn: &Connection, encoded_registry_name: &str) -> CargoResult<i64> {
-        match self.registry_keys.get(encoded_registry_name) {
+    fn registry_id(
+        &mut self,
+        conn: &Connection,
+        encoded_registry_name: InternedString,
+    ) -> CargoResult<i64> {
+        match self.registry_keys.get(&encoded_registry_name) {
             Some(i) => Ok(*i),
             None => {
-                let id = GlobalCacheTracker::registry_id_from_name(conn, encoded_registry_name)?;
-                self.registry_keys
-                    .insert(encoded_registry_name.to_string(), id);
+                let id = GlobalCacheTracker::registry_id_from_name(conn, &encoded_registry_name)?;
+                self.registry_keys.insert(encoded_registry_name, id);
                 Ok(id)
             }
         }
     }
 
-    fn git_id(&mut self, conn: &Connection, encoded_git_name: &str) -> CargoResult<i64> {
-        match self.git_keys.get(encoded_git_name) {
+    fn git_id(&mut self, conn: &Connection, encoded_git_name: InternedString) -> CargoResult<i64> {
+        match self.git_keys.get(&encoded_git_name) {
             Some(i) => Ok(*i),
             None => {
                 let id = conn.query_row(
@@ -1129,7 +1134,7 @@ impl DeferredGlobalLastUse {
                     [encoded_git_name],
                     |row| row.get(0),
                 )?;
-                self.git_keys.insert(encoded_git_name.to_string(), id);
+                self.git_keys.insert(encoded_git_name, id);
                 Ok(id)
             }
         }
