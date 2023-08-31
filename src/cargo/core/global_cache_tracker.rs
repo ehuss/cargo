@@ -766,7 +766,7 @@ impl GlobalCacheTracker {
                 if select_stmt.exists(params![id, src_name])? {
                     continue;
                 }
-                let src_path = index_path.join(&src_name);
+                let src_path = index_path.join(src_name);
                 let meta = src_path.metadata()?; // TODO context
                 if !meta.is_dir() {
                     continue;
@@ -815,10 +815,8 @@ impl GlobalCacheTracker {
         max_age: Timestamp,
     ) -> CargoResult<Vec<PathBuf>> {
         debug!("cleaning index since {max_age:?}");
-        let mut stmt = conn.prepare_cached(&format!(
-            "DELETE FROM registry_index WHERE timestamp < ?1
-                RETURNING name"
-        ))?;
+        let mut stmt =
+            conn.prepare_cached("DELETE FROM registry_index WHERE timestamp < ?1 RETURNING name")?;
         let paths = stmt
             .query_map(params![max_age], |row| {
                 Ok(PathBuf::from(row.get_unwrap::<_, String>(0)))
@@ -832,10 +830,9 @@ impl GlobalCacheTracker {
         max_age: Timestamp,
     ) -> CargoResult<Vec<PathBuf>> {
         debug!("cleaning git co since {max_age:?}");
-        let mut stmt = conn.prepare_cached(&format!(
-            "DELETE FROM git_checkout WHERE timestamp < ?1
-                RETURNING git_id, name"
-        ))?;
+        let mut stmt = conn.prepare_cached(
+            "DELETE FROM git_checkout WHERE timestamp < ?1 RETURNING git_id, name",
+        )?;
         let rows = stmt
             .query_map(params![max_age], |row| {
                 let git_id = row.get_unwrap(0);
@@ -860,10 +857,8 @@ impl GlobalCacheTracker {
         max_age: Timestamp,
     ) -> CargoResult<Vec<PathBuf>> {
         debug!("cleaning git db since {max_age:?}");
-        let mut stmt = conn.prepare_cached(&format!(
-            "DELETE FROM git_db WHERE timestamp < ?1
-                RETURNING name"
-        ))?;
+        let mut stmt =
+            conn.prepare_cached("DELETE FROM git_db WHERE timestamp < ?1 RETURNING name")?;
         let paths = stmt
             .query_map(params![max_age], |row| {
                 Ok(PathBuf::from(row.get_unwrap::<_, String>(0)))
@@ -925,7 +920,7 @@ impl DeferredGlobalLastUse {
         registry_index: RegistryIndex,
         timestamp: Option<&SystemTime>,
     ) {
-        let timestamp = timestamp.map_or(self.now, |t| to_timestamp(t));
+        let timestamp = timestamp.map_or(self.now, to_timestamp);
         self.registry_index_timestamps
             .insert(registry_index, timestamp);
     }
@@ -935,7 +930,7 @@ impl DeferredGlobalLastUse {
         registry_crate: RegistryCrate,
         timestamp: Option<&SystemTime>,
     ) {
-        let timestamp = timestamp.map_or(self.now, |t| to_timestamp(t));
+        let timestamp = timestamp.map_or(self.now, to_timestamp);
         let index = RegistryIndex {
             encoded_registry_name: registry_crate.encoded_registry_name,
         };
@@ -949,7 +944,7 @@ impl DeferredGlobalLastUse {
         registry_src: RegistrySrc,
         timestamp: Option<&SystemTime>,
     ) {
-        let timestamp = timestamp.map_or(self.now, |t| to_timestamp(t));
+        let timestamp = timestamp.map_or(self.now, to_timestamp);
         let index = RegistryIndex {
             encoded_registry_name: registry_src.encoded_registry_name,
         };
@@ -962,7 +957,7 @@ impl DeferredGlobalLastUse {
         git_checkout: GitCheckout,
         timestamp: Option<&SystemTime>,
     ) {
-        let timestamp = timestamp.map_or(self.now, |t| to_timestamp(t));
+        let timestamp = timestamp.map_or(self.now, to_timestamp);
         let db = GitDb {
             encoded_git_name: git_checkout.encoded_git_name,
         };
@@ -1035,10 +1030,7 @@ impl DeferredGlobalLastUse {
                 row.get(0)
             })?;
             // TODO clone: InternedString, or use get instead?
-            match self
-                .registry_keys
-                .entry(index.encoded_registry_name.clone())
-            {
+            match self.registry_keys.entry(index.encoded_registry_name) {
                 hash_map::Entry::Occupied(o) => {
                     assert_eq!(*o.get(), id);
                 }
@@ -1063,7 +1055,7 @@ impl DeferredGlobalLastUse {
                 row.get(0)
             })?;
             // TODO: clone
-            match self.git_keys.entry(git_db.encoded_git_name.clone()) {
+            match self.git_keys.entry(git_db.encoded_git_name) {
                 hash_map::Entry::Occupied(o) => assert_eq!(*o.get(), id),
                 hash_map::Entry::Vacant(v) => {
                     v.insert(id);
@@ -1170,6 +1162,7 @@ fn to_timestamp(t: &SystemTime) -> Timestamp {
         .as_secs()
 }
 
+#[allow(clippy::disallowed_methods)]
 fn now() -> Timestamp {
     match std::env::var("__CARGO_TEST_LAST_USE_NOW") {
         Ok(now) => now.parse().unwrap(),
