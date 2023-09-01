@@ -1,13 +1,98 @@
 //! Support for tracking the last time files were used to assist with cleaning
 //! up those files if they haven't been used in a while.
 //!
-//! TODO: Give an introduction on how everything works.
+//! Tracking of cache files is stored in a sqlite database which contains a
+//! timestamp of the last time the file was used, as well as the size of the
+//! file.
+//!
+//! While cargo is running, when it detects a use of a cache file, it adds a
+//! timestamp to [`DeferredGlobalLastUse`]. This batches up a set of changes
+//! that are then flushed to the database all at once (via
+//! [`DeferredGlobalLastUse::save`]). Ideally saving would only be done once
+//! for performance reasons, but that is not really possible due to the way
+//! cargo works, since there are different ways cargo can be used (like `cargo
+//! generate-lockfile`, `cargo fetch`, and `cargo build` are all very
+//! different ways the code is used).
+//!
+//! All of the database interaction is done through the [`GlobalCacheTracker`]
+//! type.
+//!
+//! There is a single global [`GlobalCacheTracker`] and
+//! [`DeferredGlobalLastUse`] stored in [`Config`].
+//!
+//! ## Automatic gc
+//!
+//! Some commands (primarily the build commands) will trigger an automatic
+//! deletion of files that haven't been used in a while. The interface for
+//! this is in the [`cargo::core::gc`] module. The database tracks the last
+//! time an automatic gc was performed so that it is only done once per day
+//! for performance reasons.
+//!
+//! ## Manual gc
+//!
+//! The user can perform a manual garbage collection with the `cargo clean`
+//! command. That command has a variety of options to specify what to delete.
+//! Manual gc supports deleting based on age or size or both.
 //!
 //! ## Locking
 //!
-//! TODO: Describe that rusqlite defaults to 5s busy timeout. Explain to avoid
-//! that and to use package cache locking only so that there is feedback to
-//! the user, and to support indefinite blocking.
+//! Usage of the database requires that the package cache is locked to prevent
+//! concurrent access. Although sqlite has built-in locking support, we want
+//! to use cargo's locking so that the "Blocking" message gets displayed, and
+//! so that locks can block indefinitely for long-running build commands.
+//! [`rusqlite`] has a default timeout of 5 seconds, though that is
+//! configurable.
+//!
+//! When garbage collection is being performed, the package cache lock must be
+//! in [`CacheLockMode::MutateExclusive`] to ensure no other cargo process is
+//! running. See [`cargo::util::cache_lock`] for more detail on locking.
+//!
+//! ## Compatibility
+//!
+//! The database must retain both forwards and backwards compatibility between
+//! different versions of cargo. For the most part, this shouldn't be too
+//! difficult to maintain. Generally sqlite doesn't change on-disk formats
+//! between versions (the introduction of WAL is one of the few examples where
+//! version 3 had a format change, but we wouldn't use it anyway since it has
+//! shared-memory requirements cargo can't depend on due to things like
+//! network mounts).
+//!
+//! Schema changes must be managed through [`migrations`] by adding new
+//! entries that make a change to the database. Changes must not break older
+//! versions of cargo. Generally, adding columns should be fine (either with a
+//! default value, or NULL). Adding tables should also be fine. Just don't do
+//! destructive things like removing a column, or changing the semantics of an
+//! existing column.
+//!
+//! ## Performance
+//!
+//! A lot of focus on the design of this system is to minimize the performance
+//! impact. Every build command needs to save updates which we try to avoid
+//! having a noticeable impact on build times. Systems like Windows,
+//! particularly with a magnetic hard disk, can experience a fairly large
+//! impact of cargo's overhead. Cargo's benchsuite has some benchmarks to help
+//! compare different environments, or changes to the code here. Please try to
+//! keep performance in mind if making any major changes.
+//!
+//! Performance of `cargo clean` is not quite as important since it is not
+//! expected to be run often. However, it is still courteous to the user to
+//! try to not impact it too much. One part that has a performance concern is
+//! that the clean command will synchronize the database with whatever is on
+//! disk if needed (in case files were added by older versions of cargo that
+//! don't do cache tracking, or if the user manually deleted some files). This
+//! can potentially be very slow, especially if the two are very out of sync.
+//!
+//! ## Filesystems
+//!
+//! Everything here is sensitive to the kind of filesystem it is running on.
+//! People tend to run cargo in all sorts of strange environments that have
+//! limited capabilities, or on things like read-only mounts. The code here
+//! needs to gracefully handle as many situations as possible.
+//!
+//! The sections above about performance and locking are very relevant when
+//! considering different filesystems.
+//!
+//! There are checks for read-only filesystems, which is generally ignored.
 
 use crate::core::gc::GcOpts;
 use crate::core::Verbosity;
@@ -19,25 +104,13 @@ use crate::util::{Filesystem, Progress, ProgressStyle};
 use crate::{CargoResult, Config};
 use anyhow::Context;
 use cargo_util::paths;
-use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput};
 use rusqlite::{params, Connection, ErrorCode};
 use std::collections::{hash_map, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, trace};
 
-impl FromSql for InternedString {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> Result<Self, FromSqlError> {
-        value.as_str().map(InternedString::new)
-    }
-}
-
-impl ToSql for InternedString {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
-        Ok(ToSqlOutput::from(self.as_str()))
-    }
-}
-
+/// The filename of the database.
 const GLOBAL_CACHE_FILENAME: &str = ".global-cache";
 
 /// Type for timestamps as stored in the database.
@@ -208,6 +281,10 @@ fn migrations() -> Vec<Migration> {
 }
 
 impl GlobalCacheTracker {
+    /// Creates a new [`GlobalCacheTracker`].
+    ///
+    /// The caller is responsible for locking the package cache with
+    /// [`CacheLockMode::DownloadExclusive`] before calling this.
     pub fn new(config: &Config) -> CargoResult<GlobalCacheTracker> {
         let mut conn = if config.cli_unstable().gc {
             let db_path = Self::db_path(config);
@@ -530,6 +607,8 @@ impl GlobalCacheTracker {
         Ok(())
     }
 
+    /// Returns relative paths to delete from either registry_crate or
+    /// registry_src whose last use is older than the given timestamp.
     fn get_registry_items_to_clean_age(
         conn: &Connection,
         max_age: Timestamp,
@@ -559,6 +638,9 @@ impl GlobalCacheTracker {
         Ok(paths)
     }
 
+    /// Returns relative paths to delete from either `registry_crate` or
+    /// `registry_src` in order to keep the total size under the given max
+    /// size.
     fn get_registry_items_to_clean_size(
         conn: &Connection,
         config: &Config,
@@ -621,6 +703,9 @@ impl GlobalCacheTracker {
         Ok(paths)
     }
 
+    /// Returns relative paths to delete from both `registry_crate` and
+    /// `registry_src` in order to keep the total size under the given max
+    /// size.
     fn get_registry_items_to_clean_size_both(
         conn: &Connection,
         config: &Config,
@@ -869,6 +954,8 @@ impl GlobalCacheTracker {
         Ok(())
     }
 
+    /// Returns relative paths to delete from `registry_index` whose last use is
+    /// older than the given timestamp.
     fn get_registry_index_to_clean(
         conn: &Connection,
         max_age: Timestamp,
@@ -886,6 +973,8 @@ impl GlobalCacheTracker {
         Ok(paths)
     }
 
+    /// Returns relative paths to delete from `git_checkout` whose last use is
+    /// older than the given timestamp.
     fn get_git_co_items_to_clean(
         conn: &Connection,
         max_age: Timestamp,
@@ -914,6 +1003,8 @@ impl GlobalCacheTracker {
         Ok(paths)
     }
 
+    /// Returns relative paths to delete from either `git_db` in order to keep
+    /// the total size under the given max size.
     fn get_git_db_items_to_clean(
         conn: &Connection,
         max_age: Timestamp,
@@ -963,22 +1054,34 @@ impl DeferredGlobalLastUse {
         self.git_checkout_timestamps.clear();
     }
 
+    /// Indicates the given [`RegistryIndex`] has been used right now.
     pub fn mark_registry_index_used(&mut self, registry_index: RegistryIndex) {
         self.mark_registry_index_used_stamp(registry_index, None);
     }
 
+    /// Indicates the given [`RegistryCrate`] has been used right now.
+    ///
+    /// Also implicitly marks the index used, too.
     pub fn mark_registry_crate_used(&mut self, registry_crate: RegistryCrate) {
         self.mark_registry_crate_used_stamp(registry_crate, None);
     }
 
+    /// Indicates the given [`RegistrySrc`] has been used right now.
+    ///
+    /// Also implicitly marks the index used, too.
     pub fn mark_registry_src_used(&mut self, registry_src: RegistrySrc) {
         self.mark_registry_src_used_stamp(registry_src, None);
     }
 
+    /// Indicates the given [`GitCheckout`] has been used right now.
+    ///
+    /// Also implicitly marks the git db used, too.
     pub fn mark_git_checkout_used(&mut self, git_checkout: GitCheckout) {
         self.mark_git_checkout_used_stamp(git_checkout, None);
     }
 
+    /// Indicates the given [`RegistryIndex`] has been used with the given
+    /// time (or "now" if `None`).
     pub fn mark_registry_index_used_stamp(
         &mut self,
         registry_index: RegistryIndex,
@@ -989,6 +1092,10 @@ impl DeferredGlobalLastUse {
             .insert(registry_index, timestamp);
     }
 
+    /// Indicates the given [`RegistryCrate`] has been used with the given
+    /// time (or "now" if `None`).
+    ///
+    /// Also implicitly marks the index used, too.
     pub fn mark_registry_crate_used_stamp(
         &mut self,
         registry_crate: RegistryCrate,
@@ -1003,6 +1110,10 @@ impl DeferredGlobalLastUse {
             .insert(registry_crate, timestamp);
     }
 
+    /// Indicates the given [`RegistrySrc`] has been used with the given
+    /// time (or "now" if `None`).
+    ///
+    /// Also implicitly marks the index used, too.
     pub fn mark_registry_src_used_stamp(
         &mut self,
         registry_src: RegistrySrc,
@@ -1016,6 +1127,10 @@ impl DeferredGlobalLastUse {
         self.registry_src_timestamps.insert(registry_src, timestamp);
     }
 
+    /// Indicates the given [`GitCheckout`] has been used with the given
+    /// time (or "now" if `None`).
+    ///
+    /// Also implicitly marks the git db used, too.
     pub fn mark_git_checkout_used_stamp(
         &mut self,
         git_checkout: GitCheckout,
@@ -1031,7 +1146,7 @@ impl DeferredGlobalLastUse {
 
     /// Saves all of the deferred information to the database.
     ///
-    /// This will also clear the state of self.
+    /// This will also clear the state of `self`.
     pub fn save(&mut self, tracker: &mut GlobalCacheTracker) -> CargoResult<()> {
         trace!("saving last-use data");
         if self.is_empty() {
@@ -1081,6 +1196,8 @@ impl DeferredGlobalLastUse {
         self.save(&mut tracker)
     }
 
+    /// Flushes all of the `registry_index_timestamps` to the database,
+    /// clearing `registry_index_timestamps`.
     fn insert_registry_index_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
         let mut stmt = conn.prepare_cached(
             "INSERT INTO registry_index (name, timestamp)
@@ -1105,6 +1222,8 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
+    /// Flushes all of the `git_db_timestamps` to the database,
+    /// clearing `registry_index_timestamps`.
     fn insert_git_db_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
         let mut stmt = conn.prepare_cached(
             "INSERT INTO git_db (name, timestamp)
@@ -1127,6 +1246,8 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
+    /// Flushes all of the `registry_crate_timestamps` to the database,
+    /// clearing `registry_index_timestamps`.
     fn insert_registry_crate_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
         let registry_crate_timestamps = std::mem::take(&mut self.registry_crate_timestamps);
         for (registry_crate, timestamp) in registry_crate_timestamps {
@@ -1147,6 +1268,8 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
+    /// Flushes all of the `registry_src_timestamps` to the database,
+    /// clearing `registry_index_timestamps`.
     fn insert_registry_src_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
         let registry_src_timestamps = std::mem::take(&mut self.registry_src_timestamps);
         for (registry_src, timestamp) in registry_src_timestamps {
@@ -1172,6 +1295,8 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
+    /// Flushes all of the `git_checkout_timestamps` to the database,
+    /// clearing `registry_index_timestamps`.
     fn insert_git_checkout_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
         let git_checkout_timestamps = std::mem::take(&mut self.git_checkout_timestamps);
         for (git_checkout, timestamp) in git_checkout_timestamps {
@@ -1187,6 +1312,10 @@ impl DeferredGlobalLastUse {
         Ok(())
     }
 
+    /// Returns the numeric ID of the registry, either fetching from the local
+    /// cache, or getting it from the database.
+    ///
+    /// It is an error if the registry does not exist.
     fn registry_id(
         &mut self,
         conn: &Connection,
@@ -1202,6 +1331,10 @@ impl DeferredGlobalLastUse {
         }
     }
 
+    /// Returns the numeric ID of the git db, either fetching from the local
+    /// cache, or getting it from the database.
+    ///
+    /// It is an error if the git db does not exist.
     fn git_id(&mut self, conn: &Connection, encoded_git_name: InternedString) -> CargoResult<i64> {
         match self.git_keys.get(&encoded_git_name) {
             Some(i) => Ok(*i),
@@ -1218,12 +1351,20 @@ impl DeferredGlobalLastUse {
     }
 }
 
+/// Converts a [`SystemTime`] to a [`Timestamp`] which can be stored in the database.
 fn to_timestamp(t: &SystemTime) -> Timestamp {
     t.duration_since(SystemTime::UNIX_EPOCH)
         .expect("invalid clock")
         .as_secs()
 }
 
+/// Returns the current time.
+///
+/// This supports pretending that the time is different for testing using an
+/// environment variable.
+///
+/// If possible, try to avoid calling this too often since accessing clocks
+/// can be a little slow on some systems.
 #[allow(clippy::disallowed_methods)]
 fn now() -> Timestamp {
     match std::env::var("__CARGO_TEST_LAST_USE_NOW") {

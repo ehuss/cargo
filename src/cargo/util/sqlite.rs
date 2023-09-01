@@ -1,8 +1,21 @@
 //! Utilities to help with working with sqlite.
 
+use crate::util::interning::InternedString;
 use crate::CargoResult;
-use rusqlite::Connection;
-use rusqlite::TransactionBehavior;
+use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput};
+use rusqlite::{Connection, TransactionBehavior};
+
+impl FromSql for InternedString {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> Result<Self, FromSqlError> {
+        value.as_str().map(InternedString::new)
+    }
+}
+
+impl ToSql for InternedString {
+    fn to_sql(&self) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
+        Ok(ToSqlOutput::from(self.as_str()))
+    }
+}
 
 /// A function or closure representing a database migration.
 ///
