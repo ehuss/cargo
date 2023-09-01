@@ -18,6 +18,7 @@ use crate::util::sqlite::{self, basic_migration, Migration};
 use crate::util::{Filesystem, Progress, ProgressStyle};
 use crate::{CargoResult, Config};
 use anyhow::Context;
+use cargo_util::paths;
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput};
 use rusqlite::{params, Connection, ErrorCode};
 use std::collections::{hash_map, HashMap};
@@ -106,6 +107,14 @@ pub struct RegistryCrate {
 pub struct RegistrySrc {
     pub encoded_registry_name: InternedString,
     pub package_dir: InternedString,
+    // Total size of the src directory in bytes.
+    //
+    // This can be None when the size is unknown. For example, when the src
+    // directory already exists on disk, and we just want to update the
+    // last-use timestamp. We don't want to take the expense of computing disk
+    // usage unless necessary. `populate_untracked_src` will handle any actual
+    // NULL values in the database, which can happen when the src directory is
+    // created by an older version of cargo that did not track sizes.
     pub size: Option<u64>,
 }
 
@@ -149,6 +158,9 @@ fn migrations() -> Vec<Migration> {
              )",
         ),
         // Extracted src directories
+        //
+        // Note that `size` can be NULL. This will happen when
+        //
         basic_migration(
             "CREATE TABLE registry_src (
                 registry_id INTEGER NOT NULL,
@@ -225,6 +237,8 @@ impl GlobalCacheTracker {
     }
 
     /// Given an encoded registry name, returns its ID.
+    ///
+    /// It is an error to try to fetch a registry_index that is not already in the database.
     fn registry_id_from_name(conn: &Connection, encoded_registry_name: &str) -> CargoResult<i64> {
         let mut stmt = conn.prepare_cached("SELECT id FROM registry_index WHERE name = ?")?;
         let id = stmt.query_row([encoded_registry_name], |row| row.get(0))?;
@@ -384,7 +398,17 @@ impl GlobalCacheTracker {
         Ok(())
     }
 
+    /// Deletes files from the global cache based on the given options.
     pub fn clean(&mut self, clean_ctx: &mut CleanContext<'_>, gc_opts: &GcOpts) -> CargoResult<()> {
+        self.clean_inner(clean_ctx, gc_opts)
+            .with_context(|| "failed to clean entries from the global cache")
+    }
+
+    fn clean_inner(
+        &mut self,
+        clean_ctx: &mut CleanContext<'_>,
+        gc_opts: &GcOpts,
+    ) -> CargoResult<()> {
         let config = clean_ctx.config;
         let now = now();
         trace!("cleaning {gc_opts:?}");
@@ -432,6 +456,16 @@ impl GlobalCacheTracker {
         // Size collection must happen after date collection so that dates
         // have precedence, since size constraints are a more blunt
         // instrument.
+        //
+        // These are also complicated by the `--max-download-size` option
+        // overlapping with `--max-crate-size` and `--max-src-size`, which
+        // requires some coordination between those options which isn't
+        // necessary with the age-based options. An item's age is either older
+        // or it isn't, but contrast that with size which is based on the sum
+        // of all tracked items. Also, `--max-download-size` is summed against
+        // both the crate and src tracking, which requires combining them to
+        // compute the size, and then separating them to calculate the correct
+        // paths.
         let mut size_crate_paths = gc_opts
             .max_crate_size
             .map(|max_size| {
@@ -464,7 +498,6 @@ impl GlobalCacheTracker {
         let progress = CleaningFolderBar::new(config, total);
         clean_ctx.set_progress(Box::new(progress));
         let base_src_path = config.registry_source_path().into_path_unlocked();
-        // TODO: rm_rf context
         for path in src_paths.iter().chain(size_src_paths.iter()) {
             clean_ctx.rm_rf(&base_src_path.join(path))?;
         }
@@ -545,10 +578,20 @@ impl GlobalCacheTracker {
         if total_size <= max_size {
             return Ok(Vec::new());
         }
-        // TODO: Explain this sql statement.
+        // This SQL statement selects all of the rows ordered by timestamp,
+        // and then uses a window function to keep a running total of the
+        // size. It selects all rows until the running total exceeds the
+        // threshold of the total number of bytes that we want to delete.
+        //
+        // The window function essentially computes an aggregate over all
+        // previous rows as it goes along. As long as the running size is
+        // below the total amount that we need to delete, it keeps picking
+        // more rows.
         //
         // The ORDER BY includes `name` mainly for test purposes so that
         // entries with the same timestamp have deterministic behavior.
+        //
+        // The coalesce helps convert NULL to 0.
         let mut stmt = conn.prepare(&format!(
             "DELETE FROM {table_name} WHERE rowid IN \
                 (SELECT x.rowid FROM \
@@ -587,7 +630,11 @@ impl GlobalCacheTracker {
         Self::sync_src_db_with_files(conn, config)?;
         debug!("cleaning download till under {max_size:?}");
 
-        // TODO: Describe this query. The 1/2 thing, and why it is a single query.
+        // This SQL statement selects from both registry_src and
+        // registry_crate so that sorting of timestamps incorporates both of
+        // them at the same time. It uses a const value of 1 or 2 as the first
+        // column so that the code below can determine which table the value
+        // came from.
         let mut stmt = conn.prepare_cached(
             "SELECT 1, registry_src.rowid, registry_src.name AS name, registry_index.name,
                     registry_src.size, registry_src.timestamp AS timestamp
@@ -666,6 +713,8 @@ impl GlobalCacheTracker {
     }
 
     /// Updates the database to match which `.crate` files actually exist.
+    ///
+    /// This is only called by `cargo clean` when needed since it is an expensive operation.
     fn sync_crate_db_with_files(conn: &Connection, config: &Config) -> CargoResult<()> {
         let base_path = config.registry_cache_path().into_path_unlocked();
         Self::update_db_for_removed(conn, "registry_crate", &base_path)?;
@@ -675,6 +724,8 @@ impl GlobalCacheTracker {
 
     /// Updates the database to match which `src` files actually exist, and
     /// updates any untracked sizes.
+    ///
+    /// This is only called by `cargo clean` when needed since it is an expensive operation.
     fn sync_src_db_with_files(conn: &Connection, config: &Config) -> CargoResult<()> {
         let base_path = config.registry_source_path().into_path_unlocked();
         Self::update_db_for_removed(conn, "registry_src", &base_path)?;
@@ -683,6 +734,9 @@ impl GlobalCacheTracker {
     }
 
     /// Removes database entries for any files that are not on disk.
+    ///
+    /// This could happen for example if the user manually deleted the file or
+    /// any such scenario where the filesystem and db are out of sync.
     fn update_db_for_removed(
         conn: &Connection,
         table_name: &str,
@@ -710,9 +764,12 @@ impl GlobalCacheTracker {
     /// Updates the database to track any `.crate` files that are currently
     /// not tracked (such as when they are downloaded by an older version of
     /// cargo).
+    ///
+    /// This is only called by `cargo clean` when needed since it is an expensive operation.
     fn populate_untracked_crate(conn: &Connection, config: &Config) -> CargoResult<()> {
         debug!("populating untracked crate files");
         let base_path = config.registry_cache_path().into_path_unlocked();
+        // Gather index names (and make sure they are in the database).
         let index_names = Self::names_from(&base_path)?;
         Self::populate_untracked_registry_index_in_path(conn, &index_names)?;
 
@@ -727,8 +784,9 @@ impl GlobalCacheTracker {
             let index_path = base_path.join(index_name);
             for crate_name in Self::names_from(&index_path)? {
                 if crate_name.ends_with(".crate") {
-                    // TODO: context;
-                    let size = index_path.join(&crate_name).metadata()?.len();
+                    // Missing files should have already been taken care of by
+                    // update_db_for_removed.
+                    let size = paths::metadata(index_path.join(&crate_name))?.len();
                     insert_stmt.execute(params![id, crate_name, size, now])?;
                 }
             }
@@ -739,13 +797,18 @@ impl GlobalCacheTracker {
     /// Updates the database to track any `src` directories that are currently
     /// not tracked (such as when they are downloaded by an older version of
     /// cargo).
+    ///
+    /// This is only called by `cargo clean` when needed since it is an expensive operation.
     fn populate_untracked_src(conn: &Connection, config: &Config) -> CargoResult<()> {
         debug!("populating untracked src files");
         let base_path = config.registry_source_path().into_path_unlocked();
+        // Gather index names (and make sure they are in the database).
         let index_names = Self::names_from(&base_path)?;
         Self::populate_untracked_registry_index_in_path(conn, &index_names)?;
 
-        // TODO: Is this select necessary?
+        // This SELECT is used to determine if the directory is already
+        // tracked. We don't want to do the expensive size computation unless
+        // necessary.
         let mut select_stmt = conn.prepare_cached(
             "SELECT 1 FROM registry_src
              WHERE registry_id = ?1 AND name = ?2",
@@ -757,6 +820,7 @@ impl GlobalCacheTracker {
         )?;
         let mut progress = Progress::with_style("Scanning", ProgressStyle::Ratio, config);
         let now = now();
+        // Compute the size of any src directory not in the database.
         for index_name in index_names {
             let id = Self::registry_id_from_name(conn, &index_name)?;
             let index_path = base_path.join(index_name);
@@ -767,12 +831,11 @@ impl GlobalCacheTracker {
                     continue;
                 }
                 let src_path = index_path.join(src_name);
-                let meta = src_path.metadata()?; // TODO context
-                if !meta.is_dir() {
+                if !src_path.is_dir() {
                     continue;
                 }
                 progress.tick(i, max, "")?;
-                let size = cargo_util::paths::du(&src_path)?;
+                let size = paths::du(&src_path)?;
                 insert_stmt.execute(params![id, src_name, size, now])?;
             }
         }
@@ -787,7 +850,6 @@ impl GlobalCacheTracker {
         let mut update_stmt =
             conn.prepare_cached("UPDATE registry_src SET size = ?1 WHERE rowid = ?2")?;
         let mut progress = Progress::with_style("Scanning", ProgressStyle::Ratio, config);
-        // TODO: Don't use query_map, use query() and while let Some(row) = rows.next()?
         let rows: Vec<_> = null_stmt
             .query_map([], |row| {
                 Ok((row.get_unwrap(0), row.get_unwrap(1), row.get_unwrap(2)))
@@ -797,13 +859,10 @@ impl GlobalCacheTracker {
         for (i, row) in rows.into_iter().enumerate() {
             let (rowid, src_name, index_name): (i64, String, String) = row?;
             let path = base_path.join(index_name).join(src_name);
-            if !path.exists() {
-                // TODO: Should this delete the entry?
-                tracing::info!("`{path:?}` is missing");
-                continue;
-            }
             progress.tick(i, max, "")?;
-            let size = cargo_util::paths::du(&path)?;
+            // Missing files should have already been taken care of by
+            // update_db_for_removed.
+            let size = paths::du(&path)?;
             update_stmt.execute(params![size, rowid])?;
         }
 
@@ -815,8 +874,10 @@ impl GlobalCacheTracker {
         max_age: Timestamp,
     ) -> CargoResult<Vec<PathBuf>> {
         debug!("cleaning index since {max_age:?}");
-        let mut stmt =
-            conn.prepare_cached("DELETE FROM registry_index WHERE timestamp < ?1 RETURNING name")?;
+        let mut stmt = conn.prepare_cached(
+            "DELETE FROM registry_index WHERE timestamp < ?1
+                RETURNING name",
+        )?;
         let paths = stmt
             .query_map(params![max_age], |row| {
                 Ok(PathBuf::from(row.get_unwrap::<_, String>(0)))
@@ -831,7 +892,8 @@ impl GlobalCacheTracker {
     ) -> CargoResult<Vec<PathBuf>> {
         debug!("cleaning git co since {max_age:?}");
         let mut stmt = conn.prepare_cached(
-            "DELETE FROM git_checkout WHERE timestamp < ?1 RETURNING git_id, name",
+            "DELETE FROM git_checkout WHERE timestamp < ?1
+                RETURNING git_id, name",
         )?;
         let rows = stmt
             .query_map(params![max_age], |row| {
@@ -857,8 +919,10 @@ impl GlobalCacheTracker {
         max_age: Timestamp,
     ) -> CargoResult<Vec<PathBuf>> {
         debug!("cleaning git db since {max_age:?}");
-        let mut stmt =
-            conn.prepare_cached("DELETE FROM git_db WHERE timestamp < ?1 RETURNING name")?;
+        let mut stmt = conn.prepare_cached(
+            "DELETE FROM git_db WHERE timestamp < ?1
+                RETURNING name",
+        )?;
         let paths = stmt
             .query_map(params![max_age], |row| {
                 Ok(PathBuf::from(row.get_unwrap::<_, String>(0)))
@@ -1029,7 +1093,6 @@ impl DeferredGlobalLastUse {
             let id = stmt.query_row(params![index.encoded_registry_name, timestamp], |row| {
                 row.get(0)
             })?;
-            // TODO clone: InternedString, or use get instead?
             match self.registry_keys.entry(index.encoded_registry_name) {
                 hash_map::Entry::Occupied(o) => {
                     assert_eq!(*o.get(), id);
@@ -1054,7 +1117,6 @@ impl DeferredGlobalLastUse {
             let id = stmt.query_row(params![git_db.encoded_git_name, timestamp], |row| {
                 row.get(0)
             })?;
-            // TODO: clone
             match self.git_keys.entry(git_db.encoded_git_name) {
                 hash_map::Entry::Occupied(o) => assert_eq!(*o.get(), id),
                 hash_map::Entry::Vacant(v) => {

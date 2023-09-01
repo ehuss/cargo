@@ -64,6 +64,11 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
         if opts.doc {
             if !opts.spec.is_empty() {
                 // FIXME: https://github.com/rust-lang/cargo/issues/8790
+                // This should support the ability to clean specific packages
+                // within the doc directory. It's a little tricky since it
+                // needs to find all documentable targets, but also consider
+                // the fact that target names might overlap with dependency
+                // names and such.
                 bail!("--doc cannot be used with -p");
             }
             // If the doc option is set, we just want to delete the doc directory.
@@ -94,7 +99,6 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
     }
 
     if config.cli_unstable().gc {
-        // TODO: Think about trying to consolidate these 4 lines somehow.
         let _lock = config.acquire_package_cache_lock(CacheLockMode::MutateExclusive)?;
         let mut cache_track = GlobalCacheTracker::new(&config)?;
         let mut gc = Gc::new(config, &mut cache_track)?;

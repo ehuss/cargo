@@ -238,8 +238,6 @@ impl<'a, 'config> Gc<'a, 'config> {
         if !self.config.cli_unstable().gc {
             return Ok(());
         }
-        // TODO: Consider how errors should be handled in config (particularly
-        // for forwards compat, like if we add new forms of frequency).
         let auto_config = self
             .config
             .get::<Option<AutoConfig>>("gc.auto")?

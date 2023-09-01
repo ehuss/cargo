@@ -1,8 +1,26 @@
+//! Utility for capturing a global cache last-use database based on the files
+//! on a real-world system.
+//!
+//! This will look in the CARGO_HOME of the current system and record last-use
+//! data for all files in the cache. This is intended to provide a real-world
+//! example for a benchmark that should be close to what a real set of data
+//! should look like.
+//!
+//! See `benches/global_cache_tracker.rs` for the benchmark that uses this
+//! data.
+//!
+//! The database is kept in git. It usually shouldn't need to be re-generated
+//! unless there is a change in the schema or the benchmark.
+
 use cargo::core::global_cache_tracker::{self, DeferredGlobalLastUse, GlobalCacheTracker};
 use cargo::util::cache_lock::CacheLockMode;
 use cargo::util::interning::InternedString;
 use cargo::Config;
+use rand::prelude::SliceRandom;
+use std::collections::HashMap;
 use std::fs;
+use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 
 fn main() {
@@ -35,16 +53,7 @@ fn main() {
     let mut deferred = DeferredGlobalLastUse::new();
     let mut tracker = GlobalCacheTracker::new(&config).unwrap();
 
-    // ~/.cargo/registry/cache/github.com-1ecc6299db9ec823
     let real_home = cargo::util::homedir(&std::env::current_dir().unwrap()).unwrap();
-
-    // let index_dir = real_home.join("registry/index");
-    // for dir_ent in fs::read_dir(index_dir).unwrap() {
-    //     let registry = dir_ent.unwrap();
-    //     tracker.mark_used(LastUseKind::RegistryIndex {
-    //         encoded_registry_name: registry.file_name().to_string_lossy().into_owned(),
-    //     });
-    // }
 
     let cache_dir = real_home.join("registry/cache");
     for dir_ent in fs::read_dir(cache_dir).unwrap() {
@@ -64,6 +73,8 @@ fn main() {
         }
     }
 
+    let mut src_entries = Vec::new();
+
     let cache_dir = real_home.join("registry/src");
     for dir_ent in fs::read_dir(cache_dir).unwrap() {
         let registry = dir_ent.unwrap();
@@ -71,25 +82,16 @@ fn main() {
         for krate in fs::read_dir(registry.path()).unwrap() {
             let krate = krate.unwrap();
             let meta = krate.metadata().unwrap();
-            deferred.mark_registry_src_used_stamp(
-                global_cache_tracker::RegistrySrc {
-                    encoded_registry_name,
-                    package_dir: krate.file_name().to_string_lossy().as_ref().into(),
-                    size: Some(cargo_util::paths::du(&krate.path()).unwrap()),
-                },
-                Some(&meta.modified().unwrap()),
-            );
+            let src = global_cache_tracker::RegistrySrc {
+                encoded_registry_name,
+                package_dir: krate.file_name().to_string_lossy().as_ref().into(),
+                size: Some(cargo_util::paths::du(&krate.path()).unwrap()),
+            };
+            src_entries.push(src.clone());
+            let timestamp = meta.modified().unwrap();
+            deferred.mark_registry_src_used_stamp(src, Some(&timestamp));
         }
     }
-
-    // TODO: What's going on here?
-    // let git_db_dir = real_home.join("git/db");
-    // for dir_ent in fs::read_dir(git_db_dir).unwrap() {
-    //     let git_source = dir_ent.unwrap();
-    //     tracker.mark_used(LastUseKind::GitDb {
-    //         encoded_git_name: git_source.file_name().to_string_lossy().into_owned(),
-    //     });
-    // }
 
     let git_co_dir = real_home.join("git/checkouts");
     for dir_ent in fs::read_dir(git_co_dir).unwrap() {
@@ -109,7 +111,37 @@ fn main() {
     }
 
     deferred.save(&mut tracker).unwrap();
+    drop(deferred);
+    drop(tracker);
     fs::rename(&db_path, homedir.join("global-cache-sample")).unwrap();
-    // Clean up the lock file.
+    // Clean up the lock file created above.
     fs::remove_file(homedir.join(".package-cache")).unwrap();
+
+    // Save a random sample of crates that the benchmark should update.
+    // Pick whichever registry has the most entries. This is to be somewhat
+    // realistic for the common case that all dependencies come from one
+    // registry (crates.io).
+    let mut counts = HashMap::new();
+    for src in &src_entries {
+        let c: &mut u32 = counts.entry(src.encoded_registry_name).or_default();
+        *c += 1;
+    }
+    let mut counts: Vec<_> = counts.into_iter().map(|(k, v)| (v, k)).collect();
+    counts.sort();
+    let biggest = counts.last().unwrap().1;
+
+    src_entries.retain(|src| src.encoded_registry_name == biggest);
+    let mut rng = &mut rand::thread_rng();
+    let sample: Vec<_> = src_entries.choose_multiple(&mut rng, 500).collect();
+    let mut f = File::create(homedir.join("random-sample")).unwrap();
+    for src in sample {
+        writeln!(
+            f,
+            "{},{},{}",
+            src.encoded_registry_name,
+            src.package_dir,
+            src.size.unwrap()
+        )
+        .unwrap();
+    }
 }

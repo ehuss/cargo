@@ -148,6 +148,7 @@ dependencies = [
  "cargo-util",
  "criterion",
  "flate2",
+ "rand",
  "tar",
  "url",
 ]
