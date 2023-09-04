@@ -74,6 +74,8 @@ pub struct GcOpts {
     pub max_src_size: Option<u64>,
     /// The `--max-crate-size` CLI option.
     pub max_crate_size: Option<u64>,
+    /// The `--max-git-size` CLI option.
+    pub max_git_size: Option<u64>,
     /// The `--max-download-size` CLI option.
     pub max_download_size: Option<u64>,
 
@@ -97,6 +99,7 @@ impl GcOpts {
             || self.max_git_db_age.is_some()
             || self.max_src_size.is_some()
             || self.max_crate_size.is_some()
+            || self.max_git_size.is_some()
             || self.max_download_size.is_some()
     }
 

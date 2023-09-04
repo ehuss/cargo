@@ -202,6 +202,11 @@ pub struct GitDb {
 pub struct GitCheckout {
     pub encoded_git_name: InternedString,
     pub short_name: InternedString,
+    /// Total size of the checkout directory.
+    ///
+    /// This can be None when the size is unknown. See [`RegistrySrc::size`]
+    /// for an explanation.
+    pub size: Option<u64>,
 }
 
 /// Migrations which initialize the database, and can be used to evolve it over time.
@@ -256,6 +261,7 @@ fn migrations() -> Vec<Migration> {
             "CREATE TABLE git_checkout (
                 git_id INTEGER NOT NULL,
                 name TEXT UNIQUE NOT NULL,
+                size INTEGER,
                 timestamp INTEGER NOT NULL,
                 PRIMARY KEY (git_id, name)
              )",
@@ -316,9 +322,10 @@ impl GlobalCacheTracker {
     /// Given an encoded registry name, returns its ID.
     ///
     /// It is an error to try to fetch a registry_index that is not already in the database.
-    fn registry_id_from_name(conn: &Connection, encoded_registry_name: &str) -> CargoResult<i64> {
-        let mut stmt = conn.prepare_cached("SELECT id FROM registry_index WHERE name = ?")?;
-        let id = stmt.query_row([encoded_registry_name], |row| row.get(0))?;
+    fn id_from_name(conn: &Connection, table_name: &str, encoded_name: &str) -> CargoResult<i64> {
+        let mut stmt =
+            conn.prepare_cached(&format!("SELECT id FROM {table_name} WHERE name = ?"))?;
+        let id = stmt.query_row([encoded_name], |row| row.get(0))?;
         Ok(id)
     }
 
@@ -428,7 +435,7 @@ impl GlobalCacheTracker {
     /// Returns all git checkout timestamps.
     pub fn git_checkout_all(&self) -> CargoResult<Vec<(GitCheckout, Timestamp)>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT git_db.name, git_checkout.name, git_checkout.timestamp
+            "SELECT git_db.name, git_checkout.name, git_checkout.size, git_checkout.timestamp
              FROM git_db, git_checkout
              WHERE git_checkout.registry_id = git_db.id",
         )?;
@@ -436,10 +443,12 @@ impl GlobalCacheTracker {
             .query_map([], |row| {
                 let encoded_git_name = row.get_unwrap(0);
                 let short_name = row.get_unwrap(1);
-                let timestamp = row.get_unwrap(2);
+                let size = row.get_unwrap(2);
+                let timestamp = row.get_unwrap(3);
                 let kind = GitCheckout {
                     encoded_git_name,
                     short_name,
+                    size,
                 };
                 Ok((kind, timestamp))
             })?
@@ -557,6 +566,12 @@ impl GlobalCacheTracker {
             })
             .transpose()?
             .unwrap_or_default();
+        let size_git_paths = gc_opts
+            .max_git_size
+            .map(|max_size| Self::get_git_items_to_clean_size(&tx, config, max_size))
+            .transpose()?
+            .unwrap_or_default();
+
         let (combined_src, combined_crate) = gc_opts
             .max_download_size
             .map(|max_size| Self::get_registry_items_to_clean_size_both(&tx, config, max_size))
@@ -571,7 +586,8 @@ impl GlobalCacheTracker {
             + git_co_paths.len()
             + git_db_paths.len()
             + size_crate_paths.len()
-            + size_src_paths.len();
+            + size_src_paths.len()
+            + size_git_paths.len();
         let progress = CleaningFolderBar::new(config, total);
         clean_ctx.set_progress(Box::new(progress));
         let base_src_path = config.registry_source_path().into_path_unlocked();
@@ -587,16 +603,22 @@ impl GlobalCacheTracker {
             clean_ctx.rm_rf(&base_index_path.join(&path))?;
             // Also delete .crate and src directories, since by definition
             // they cannot be used without their index.
+
+            // TODO: Fixme, screws up max count.
             clean_ctx.rm_rf(&base_src_path.join(&path))?;
             clean_ctx.rm_rf(&base_crate_path.join(&path))?;
         }
-        let base_git_co_path = config.git_path().into_path_unlocked().join("checkouts");
+        let base_git_path = config.git_path().into_path_unlocked();
+        let base_git_co_path = base_git_path.join("checkouts");
         for path in git_co_paths {
             clean_ctx.rm_rf(&base_git_co_path.join(path))?;
         }
-        let base_git_db_path = config.git_path().into_path_unlocked().join("db");
+        let base_git_db_path = base_git_path.join("db");
         for path in git_db_paths {
             clean_ctx.rm_rf(&base_git_db_path.join(path))?;
+        }
+        for path in size_git_paths {
+            clean_ctx.rm_rf(&base_git_path.join(path))?;
         }
 
         if clean_ctx.dry_run {
@@ -765,21 +787,123 @@ impl GlobalCacheTracker {
                 crate_result.push(Path::new(&index_name).join(name));
                 delete_crate_stmt.execute([rowid])?;
             }
+            // TODO: If delete crate, ensure src is also deleted.
             total_size -= size;
         }
         Ok((src_result, crate_result))
     }
 
-    /// Looks for index caches that aren't currently in the database and adds them.
-    fn populate_untracked_registry_index_in_path(
+    /// Returns paths to delete from the git cache, keeping the total size
+    /// under the give value.
+    ///
+    /// Paths are relative to the `git` directory in the cache directory.
+    fn get_git_items_to_clean_size(
         conn: &Connection,
+        config: &Config,
+        max_size: u64,
+    ) -> CargoResult<Vec<PathBuf>> {
+        // First, make sure the db is up-to-date.
+        let base_git_path = config.git_path().into_path_unlocked();
+        let base_git_co_path = base_git_path.join("checkouts");
+        Self::sync_db_with_size(
+            conn,
+            config,
+            "git_db",
+            "git_id",
+            "git_checkout",
+            &base_git_co_path,
+        )?;
+        debug!("cleaning git till under {max_size:?}");
+
+        // Collect all the sizes from git_db and git_checkouts, and then sort them by timestamp.
+        let mut stmt = conn.prepare_cached("SELECT rowid, name, timestamp FROM git_db")?;
+        let mut git_info = stmt
+            .query_map([], |row| {
+                let rowid: i64 = row.get_unwrap(0);
+                let name: String = row.get_unwrap(1);
+                let timestamp: Timestamp = row.get_unwrap(2);
+                // Size is added below so that the error doesn't need to be
+                // converted to a rusqlite error.
+                Ok((timestamp, rowid, None, name, 0))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        for info in &mut git_info {
+            let size = cargo_util::du(&base_git_path.join("db").join(&info.3), &[])?;
+            info.4 = size;
+        }
+
+        let mut stmt = conn.prepare_cached(
+            "SELECT git_checkout.rowid, git_db.name, git_checkout.name,
+                git_checkout.size, git_checkout.timestamp
+                FROM git_checkout, git_db
+                WHERE git_checkout.git_id = git_db.id AND git_checkout.size NOT NULL",
+        )?;
+        let git_co_rows = stmt
+            .query_map([], |row| {
+                let rowid = row.get_unwrap(0);
+                let db_name: String = row.get_unwrap(1);
+                let name = row.get_unwrap(2);
+                let size = row.get_unwrap(3);
+                let timestamp = row.get_unwrap(4);
+                Ok((timestamp, rowid, Some(db_name), name, size))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        git_info.extend(git_co_rows);
+
+        // Sort by timestamp, and name. The name is included mostly for test
+        // purposes so that entries with the same timestamp have deterministic
+        // behavior.
+        git_info.sort_by(|a, b| (b.0, &b.3).cmp(&(a.0, &a.3)));
+
+        let mut delete_db_stmt = conn.prepare_cached("DELETE FROM git_db WHERE rowid = ?1")?;
+        let mut delete_co_stmt =
+            conn.prepare_cached("DELETE FROM git_checkout WHERE rowid = ?1")?;
+        let mut total_size: u64 = git_info.iter().map(|r| r.4).sum();
+        debug!("total git cache size appears to be {total_size}");
+        let mut result = Vec::new();
+        while let Some((_timestamp, rowid, db_name, name, size)) = git_info.pop() {
+            if total_size <= max_size {
+                break;
+            }
+            if let Some(db_name) = db_name {
+                result.push(Path::new("checkouts").join(db_name).join(name));
+                delete_co_stmt.execute([rowid])?;
+                total_size -= size;
+            } else {
+                let db_path = Path::new("db").join(name.clone());
+                total_size -= size;
+                result.push(db_path);
+                delete_db_stmt.execute([rowid])?;
+                // If the db is deleted, then all the checkouts must be deleted.
+                let mut i = 0;
+                while i < git_info.len() {
+                    if git_info[i].2.as_deref() == Some(name.as_ref()) {
+                        let (_, rowid, db_name, name, size) = git_info.remove(i);
+                        result.push(Path::new("checkouts").join(db_name.unwrap()).join(name));
+                        delete_co_stmt.execute([rowid])?;
+                        total_size -= size;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    /// Looks for entries that aren't currently in the database and adds them.
+    ///
+    /// This is used for registry indexes and git db's, which have the same schema.
+    fn populate_untracked_in_path(
+        conn: &Connection,
+        table: &str,
         names: &[String],
     ) -> CargoResult<()> {
-        let mut stmt = conn.prepare_cached(
-            "INSERT INTO registry_index (name, timestamp)
+        let mut stmt = conn.prepare_cached(&format!(
+            "INSERT INTO {table} (name, timestamp)
                 VALUES (?1, ?2)
                 ON CONFLICT DO NOTHING",
-        )?;
+        ))?;
         let now = now();
         for name in names {
             stmt.execute(params![name, now])?;
@@ -802,7 +926,13 @@ impl GlobalCacheTracker {
     /// This is only called by `cargo clean` when needed since it is an expensive operation.
     fn sync_crate_db_with_files(conn: &Connection, config: &Config) -> CargoResult<()> {
         let base_path = config.registry_cache_path().into_path_unlocked();
-        Self::update_db_for_removed(conn, "registry_crate", &base_path)?;
+        Self::update_db_for_removed(
+            conn,
+            "registry_index",
+            "registry_id",
+            "registry_crate",
+            &base_path,
+        )?;
         Self::populate_untracked_crate(conn, config)?;
         Ok(())
     }
@@ -813,8 +943,14 @@ impl GlobalCacheTracker {
     /// This is only called by `cargo clean` when needed since it is an expensive operation.
     fn sync_src_db_with_files(conn: &Connection, config: &Config) -> CargoResult<()> {
         let base_path = config.registry_source_path().into_path_unlocked();
-        Self::update_db_for_removed(conn, "registry_src", &base_path)?;
-        Self::populate_untracked_src(conn, config)?;
+        Self::sync_db_with_size(
+            conn,
+            config,
+            "registry_index",
+            "registry_id",
+            "registry_src",
+            &base_path,
+        )?;
         Ok(())
     }
 
@@ -824,22 +960,24 @@ impl GlobalCacheTracker {
     /// any such scenario where the filesystem and db are out of sync.
     fn update_db_for_removed(
         conn: &Connection,
+        id_table_name: &str,
+        id_column_name: &str,
         table_name: &str,
         base_path: &Path,
     ) -> CargoResult<()> {
         let mut select_stmt = conn.prepare_cached(&format!(
-            "SELECT {table_name}.rowid, registry_index.name, {table_name}.name
-             FROM registry_index, {table_name}
-             WHERE {table_name}.registry_id = registry_index.id",
+            "SELECT {table_name}.rowid, {id_table_name}.name, {table_name}.name
+             FROM {id_table_name}, {table_name}
+             WHERE {table_name}.{id_column_name} = {id_table_name}.id",
         ))?;
         let mut delete_stmt =
             conn.prepare_cached(&format!("DELETE FROM {table_name} WHERE rowid = ?1"))?;
         let mut rows = select_stmt.query([])?;
         while let Some(row) = rows.next()? {
             let rowid: i64 = row.get_unwrap(0);
-            let registry_index_name: String = row.get_unwrap(1);
+            let id_name: String = row.get_unwrap(1);
             let name: String = row.get_unwrap(2);
-            if !base_path.join(registry_index_name).join(name).exists() {
+            if !base_path.join(id_name).join(name).exists() {
                 delete_stmt.execute([rowid])?;
             }
         }
@@ -856,7 +994,7 @@ impl GlobalCacheTracker {
         let base_path = config.registry_cache_path().into_path_unlocked();
         // Gather index names (and make sure they are in the database).
         let index_names = Self::names_from(&base_path)?;
-        Self::populate_untracked_registry_index_in_path(conn, &index_names)?;
+        Self::populate_untracked_in_path(conn, "registry_index", &index_names)?;
 
         let mut insert_stmt = conn.prepare_cached(
             "INSERT INTO registry_crate (registry_id, name, size, timestamp)
@@ -865,7 +1003,7 @@ impl GlobalCacheTracker {
         )?;
         let now = now();
         for index_name in index_names {
-            let id = Self::registry_id_from_name(conn, &index_name)?;
+            let id = Self::id_from_name(conn, "registry_index", &index_name)?;
             let index_path = base_path.join(index_name);
             for crate_name in Self::names_from(&index_path)? {
                 if crate_name.ends_with(".crate") {
@@ -879,61 +1017,102 @@ impl GlobalCacheTracker {
         Ok(())
     }
 
-    /// Updates the database to track any `src` directories that are currently
-    /// not tracked (such as when they are downloaded by an older version of
-    /// cargo).
+    /// Updates the database to match what is on disk.
     ///
-    /// This is only called by `cargo clean` when needed since it is an expensive operation.
-    fn populate_untracked_src(conn: &Connection, config: &Config) -> CargoResult<()> {
-        debug!("populating untracked src files");
-        let base_path = config.registry_source_path().into_path_unlocked();
-        // Gather index names (and make sure they are in the database).
-        let index_names = Self::names_from(&base_path)?;
-        Self::populate_untracked_registry_index_in_path(conn, &index_names)?;
+    /// This performs the following cleanups:
+    ///
+    /// 1. Remove entries from the database that are missing on disk.
+    /// 2. Adds missing entries to the database that are on disk (such as when
+    ///    files are added by older versions of cargo).
+    /// 3. Fills in the `size` column where it is NULL (such as when something
+    ///    is added to disk by an older version of cargo, and one of the mark
+    ///    functions marked it without knowing the size).
+    ///
+    /// This is only called by `cargo clean` when needed since it is an
+    /// expensive operation.
+    fn sync_db_with_size(
+        conn: &Connection,
+        config: &Config,
+        id_table_name: &str,
+        id_column_name: &str,
+        table_name: &str,
+        base_path: &Path,
+    ) -> CargoResult<()> {
+        Self::update_db_for_removed(conn, id_table_name, id_column_name, table_name, base_path)?;
+        debug!("populating untracked files for {table_name}");
+        // Gather names (and make sure they are in the database).
+        let id_names = Self::names_from(&base_path)?;
+        Self::populate_untracked_in_path(conn, id_table_name, &id_names)?;
 
         // This SELECT is used to determine if the directory is already
         // tracked. We don't want to do the expensive size computation unless
         // necessary.
-        let mut select_stmt = conn.prepare_cached(
-            "SELECT 1 FROM registry_src
-             WHERE registry_id = ?1 AND name = ?2",
-        )?;
-        let mut insert_stmt = conn.prepare_cached(
-            "INSERT INTO registry_src (registry_id, name, size, timestamp)
+        let mut select_stmt = conn.prepare_cached(&format!(
+            "SELECT 1 FROM {table_name}
+             WHERE {id_column_name} = ?1 AND name = ?2",
+        ))?;
+        let mut insert_stmt = conn.prepare_cached(&format!(
+            "INSERT INTO {table_name} ({id_column_name}, name, size, timestamp)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT DO NOTHING",
-        )?;
+        ))?;
         let mut progress = Progress::with_style("Scanning", ProgressStyle::Ratio, config);
         let now = now();
         // Compute the size of any src directory not in the database.
-        for index_name in index_names {
-            let id = Self::registry_id_from_name(conn, &index_name)?;
-            let index_path = base_path.join(index_name);
-            let src_names = Self::names_from(&index_path)?;
-            let max = src_names.len();
-            for (i, src_name) in src_names.iter().enumerate() {
-                if select_stmt.exists(params![id, src_name])? {
+        for id_name in id_names {
+            let id = Self::id_from_name(conn, id_table_name, &id_name)?;
+            let index_path = base_path.join(id_name);
+            let names = Self::names_from(&index_path)?;
+            let max = names.len();
+            for (i, name) in names.iter().enumerate() {
+                if select_stmt.exists(params![id, name])? {
                     continue;
                 }
-                let src_path = index_path.join(src_name);
+                let src_path = index_path.join(name);
                 if !src_path.is_dir() {
                     continue;
                 }
                 progress.tick(i, max, "")?;
-                let size = paths::du(&src_path)?;
-                insert_stmt.execute(params![id, src_name, size, now])?;
+                // Missing paths should have been removed via update_db_for_removed.
+                let size = du(&src_path, table_name)?;
+                insert_stmt.execute(params![id, name, size, now])?;
             }
         }
-        drop(progress);
-
-        // Update NULL size entries.
-        let mut null_stmt = conn.prepare_cached(
-            "SELECT registry_src.rowid, registry_src.name, registry_index.name
-             FROM registry_src, registry_index
-             WHERE registry_src.size IS NULL AND registry_src.registry_id = registry_index.id",
+        Self::update_null_sizes(
+            conn,
+            config,
+            id_table_name,
+            id_column_name,
+            table_name,
+            base_path,
         )?;
-        let mut update_stmt =
-            conn.prepare_cached("UPDATE registry_src SET size = ?1 WHERE rowid = ?2")?;
+
+        Ok(())
+    }
+
+    /// Fills in the `size` column where it is NULL.
+    ///
+    /// This can happen when something is added to disk by an older version of
+    /// cargo, and one of the mark functions marked it without knowing the
+    /// size.
+    ///
+    /// `update_db_for_removed` should be called before this is called.
+    fn update_null_sizes(
+        conn: &Connection,
+        config: &Config,
+        id_table_name: &str,
+        id_column_name: &str,
+        table_name: &str,
+        base_path: &Path,
+    ) -> CargoResult<()> {
+        let mut null_stmt = conn.prepare_cached(&format!(
+            "SELECT {table_name}.rowid, {table_name}.name, {id_table_name}.name
+             FROM {table_name}, {id_table_name}
+             WHERE {table_name}.size IS NULL AND {table_name}.{id_column_name} = {id_table_name}.id",
+        ))?;
+        let mut update_stmt = conn.prepare_cached(&format!(
+            "UPDATE {table_name} SET size = ?1 WHERE rowid = ?2"
+        ))?;
         let mut progress = Progress::with_style("Scanning", ProgressStyle::Ratio, config);
         let rows: Vec<_> = null_stmt
             .query_map([], |row| {
@@ -942,15 +1121,14 @@ impl GlobalCacheTracker {
             .collect();
         let max = rows.len();
         for (i, row) in rows.into_iter().enumerate() {
-            let (rowid, src_name, index_name): (i64, String, String) = row?;
-            let path = base_path.join(index_name).join(src_name);
+            let (rowid, name, id_name): (i64, String, String) = row?;
+            let path = base_path.join(id_name).join(name);
             progress.tick(i, max, "")?;
             // Missing files should have already been taken care of by
             // update_db_for_removed.
-            let size = paths::du(&path)?;
+            let size = du(&path, table_name)?;
             update_stmt.execute(params![size, rowid])?;
         }
-
         Ok(())
     }
 
@@ -1302,11 +1480,16 @@ impl DeferredGlobalLastUse {
         for (git_checkout, timestamp) in git_checkout_timestamps {
             let git_id = self.git_id(conn, git_checkout.encoded_git_name)?;
             let mut stmt = conn.prepare_cached(
-                "INSERT INTO git_checkout (git_id, name, timestamp)
-                 VALUES (?1, ?2, ?3)
+                "INSERT INTO git_checkout (git_id, name, size, timestamp)
+                 VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
             )?;
-            stmt.execute(params![git_id, git_checkout.short_name, timestamp])?;
+            stmt.execute(params![
+                git_id,
+                git_checkout.short_name,
+                git_checkout.size,
+                timestamp
+            ])?;
         }
 
         Ok(())
@@ -1324,7 +1507,11 @@ impl DeferredGlobalLastUse {
         match self.registry_keys.get(&encoded_registry_name) {
             Some(i) => Ok(*i),
             None => {
-                let id = GlobalCacheTracker::registry_id_from_name(conn, &encoded_registry_name)?;
+                let id = GlobalCacheTracker::id_from_name(
+                    conn,
+                    "registry_index",
+                    &encoded_registry_name,
+                )?;
                 self.registry_keys.insert(encoded_registry_name, id);
                 Ok(id)
             }
@@ -1339,11 +1526,7 @@ impl DeferredGlobalLastUse {
         match self.git_keys.get(&encoded_git_name) {
             Some(i) => Ok(*i),
             None => {
-                let id = conn.query_row(
-                    "SELECT git_id FROM git_db WHERE name = ?",
-                    [encoded_git_name],
-                    |row| row.get(0),
-                )?;
+                let id = GlobalCacheTracker::id_from_name(conn, "git_db", &encoded_git_name)?;
                 self.git_keys.insert(encoded_git_name, id);
                 Ok(id)
             }
@@ -1390,4 +1573,16 @@ pub fn is_silent_error(e: &anyhow::Error) -> bool {
         }
     }
     false
+}
+
+fn du(path: &Path, table_name: &str) -> CargoResult<u64> {
+    // !.git is used because clones typically use hardlinks for the git
+    // contents. TODO: Verify behavior on Windows.
+    // TODO: Or even better, switch to worktrees, and remove this.
+    let patterns = if table_name == "git_checkout" {
+        &["!.git"][..]
+    } else {
+        &[][..]
+    };
+    cargo_util::du(&path, patterns)
 }

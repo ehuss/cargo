@@ -772,24 +772,6 @@ fn exclude_from_time_machine(path: &Path) {
     // doesn't prevent Cargo from working
 }
 
-pub fn du(path: &Path) -> Result<u64> {
-    du_inner(path).with_context(|| format!("failed to walk `{}`", path.display()))
-}
-
-fn du_inner(path: &Path) -> Result<u64> {
-    let mut total = 0;
-    for entry in walkdir::WalkDir::new(path) {
-        let entry = entry?;
-        if entry.file_type().is_file() {
-            let meta = entry.metadata().with_context(|| {
-                format!("failed to load metadata for `{}`", entry.path().display())
-            })?;
-            total += meta.len();
-        }
-    }
-    Ok(total)
-}
-
 #[cfg(test)]
 mod tests {
     use super::join_paths;

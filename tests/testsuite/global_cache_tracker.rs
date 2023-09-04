@@ -89,6 +89,9 @@ fn months_ago_unix(n: u64) -> String {
 }
 
 /// Populates last-use database and the cache files.
+///
+/// This makes it easier to more accurately specify exact sizes. Creating
+/// specific sizes with `Package` is too difficult.
 fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (PathBuf, PathBuf) {
     let cache_dir = paths::home().join(".cargo/registry/cache/example.com-a6c4a5adcb232b9a");
     let src_dir = paths::home().join(".cargo/registry/src/example.com-a6c4a5adcb232b9a");
@@ -236,6 +239,7 @@ fn implies_source() {
     deferred.mark_git_checkout_used(global_cache_tracker::GitCheckout {
         encoded_git_name: "cargo-e7ff1db891893a9e".into(),
         short_name: "f0a4ee0".into(),
+        size: None,
     });
     deferred.save(&mut tracker).unwrap();
 
@@ -844,7 +848,7 @@ fn tracks_sizes() {
     actual.iter().for_each(|p| p.join(".cargo-ok").rm_rf());
     let actual_sizes: Vec<_> = actual
         .iter()
-        .map(|path| cargo_util::paths::du(path).unwrap())
+        .map(|path| cargo_util::du(path, &[]).unwrap())
         .collect();
     assert_eq!(db_sizes, actual_sizes);
     assert!(db_sizes[1] > 26000);
@@ -1005,7 +1009,7 @@ fn max_size_untracked_verify(config: &Config) {
     .map(|p| p.unwrap())
     .collect();
     assert_eq!(actual.len(), 1);
-    let actual_size = cargo_util::paths::du(&actual[0]).unwrap();
+    let actual_size = cargo_util::du(&actual[0], &[]).unwrap();
     let lock = config
         .acquire_package_cache_lock(CacheLockMode::MutateExclusive)
         .unwrap();
@@ -1615,6 +1619,173 @@ fn clean_doc_with_cache() {
 [REMOVING] [ROOT]/foo/target/doc
 [REMOVING] [ROOT]/home/.cargo/registry/src/[..]/bar-1.0.0
 [REMOVING] [ROOT]/home/.cargo/registry/cache/[..]/bar-1.0.0.crate
+[REMOVED] [..]
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn clean_max_git_size() {
+    // clean --max-git-size
+    //
+    // Creates two checkouts. The sets a size threshold to delete one. And
+    // then with 0 max size to delete everything.
+    let (git_project, git_repo) = git::new_repo("bar", |p| {
+        p.file("Cargo.toml", &basic_manifest("bar", "1.0.0"))
+            .file("src/lib.rs", "")
+    });
+    let p = project()
+        .file(
+            "Cargo.toml",
+            &format!(
+                r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                bar = {{ git = '{}' }}
+            "#,
+                git_project.url()
+            ),
+        )
+        .file("src/lib.rs", "")
+        .build();
+    // Fetch and populate db.
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .env("__CARGO_TEST_LAST_USE_NOW", days_ago_unix(3))
+        .run();
+
+    // Figure out the name of the first checkout.
+    let git_root = paths::home().join(".cargo/git");
+    let db_names = get_git_db_names();
+    assert_eq!(db_names.len(), 1);
+    let db_name = &db_names[0];
+    let co_names = get_git_checkout_names(&db_name);
+    assert_eq!(co_names.len(), 1);
+    let first_co_name = &co_names[0];
+
+    // Make an update and create a new checkout.
+    git_project.change_file("src/lib.rs", "// modified");
+    git::add(&git_repo);
+    git::commit(&git_repo);
+    p.cargo("update -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        // Use a different time so that the first checkout timestamp is less
+        // than the second.
+        .env("__CARGO_TEST_LAST_USE_NOW", days_ago_unix(2))
+        .run();
+
+    // Figure out the threshold to use.
+    let mut co_names = get_git_checkout_names(&db_name);
+    assert_eq!(co_names.len(), 2);
+    co_names.retain(|name| name != first_co_name);
+    assert_eq!(co_names.len(), 1);
+    let second_co_name = &co_names[0];
+    let second_co_path = git_root
+        .join("checkouts")
+        .join(db_name)
+        .join(second_co_name);
+    let second_co_size = cargo_util::du(&second_co_path, &["!.git"]).unwrap();
+
+    let db_size = cargo_util::du(&git_root.join("db").join(db_name), &[]).unwrap();
+
+    let threshold = db_size + second_co_size;
+
+    p.cargo(&format!("clean --max-git-size={threshold} -Zgc -v"))
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(&format!(
+            "\
+[REMOVING] [ROOT]/home/.cargo/git/checkouts/{db_name}/{first_co_name}
+[REMOVED] [..]
+"
+        ))
+        .run();
+
+    // And then try cleaning everything.
+    p.cargo("clean --max-git-size=0 -Zgc -v")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr_unordered(&format!(
+            "\
+[REMOVING] [ROOT]/home/.cargo/git/checkouts/{db_name}/{second_co_name}
+[REMOVING] [ROOT]/home/.cargo/git/db/{db_name}
+[REMOVED] [..]
+"
+        ))
+        .run();
+}
+
+// Helper for setting up fake git sizes for git size cleaning.
+fn setup_fake_git_sizes(db_name: &str, db_size: usize, co_sizes: &[usize]) {
+    let base_git = paths::home().join(".cargo/git");
+    let db_path = base_git.join("db").join(db_name);
+    db_path.mkdir_p();
+    std::fs::write(db_path.join("test"), "x".repeat(db_size)).unwrap();
+    let base_co = base_git.join("checkouts").join(db_name);
+    for (i, size) in co_sizes.iter().enumerate() {
+        let co_name = format!("co{i}");
+        let co_path = base_co.join(co_name);
+        co_path.mkdir_p();
+        std::fs::write(co_path.join("test"), "x".repeat(*size)).unwrap();
+    }
+}
+
+#[cargo_test]
+fn clean_max_git_size_untracked() {
+    // If there are git directories that aren't tracked in the database,
+    // `--max-git-size` should pick it up.
+    //
+    // The db_name of "example" depends on the sorting order of the names ("e"
+    // should be after "c"), so that the db comes after the checkouts.
+    setup_fake_git_sizes("example", 5000, &[1000, 2000]);
+    cargo_process(&format!("clean -Zgc -v --max-git-size=7000"))
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [ROOT]/home/.cargo/git/checkouts/example/co0
+[REMOVED] [..]
+",
+        )
+        .run();
+    cargo_process(&format!("clean -Zgc -v --max-git-size=5000"))
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [ROOT]/home/.cargo/git/checkouts/example/co1
+[REMOVED] [..]
+",
+        )
+        .run();
+    cargo_process(&format!("clean -Zgc -v --max-git-size=0"))
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [ROOT]/home/.cargo/git/db/example
+[REMOVED] [..]
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn clean_max_git_size_deletes_co_from_db() {
+    // In the scenario where it thinks it needs to delete the db, it should
+    // also delete all the checkouts.
+    //
+    // The db_name of "abc" depends on the sorting order of the names ("a"
+    // should be before "c"), so that the db comes before the checkouts.
+    setup_fake_git_sizes("abc", 5000, &[1000, 2000]);
+    // This deletes everything because it tries to delete the db, which then
+    // deletes all checkouts.
+    cargo_process(&format!("clean -Zgc -v --max-git-size=3000"))
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [ROOT]/home/.cargo/git/db/abc
+[REMOVING] [ROOT]/home/.cargo/git/checkouts/abc/co1
+[REMOVING] [ROOT]/home/.cargo/git/checkouts/abc/co0
 [REMOVED] [..]
 ",
         )

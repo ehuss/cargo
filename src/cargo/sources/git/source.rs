@@ -135,12 +135,13 @@ impl<'cfg> GitSource<'cfg> {
         self.path_source.as_mut().unwrap().read_packages()
     }
 
-    fn mark_used(&self) -> CargoResult<()> {
+    fn mark_used(&self, size: Option<u64>) -> CargoResult<()> {
         self.config
             .deferred_global_last_use()?
             .mark_git_checkout_used(global_cache_tracker::GitCheckout {
                 encoded_git_name: self.ident,
                 short_name: self.short_id.expect("update before download"),
+                size,
             });
         Ok(())
     }
@@ -217,7 +218,7 @@ impl<'cfg> Source for GitSource<'cfg> {
 
     fn block_until_ready(&mut self) -> CargoResult<()> {
         if self.path_source.is_some() {
-            self.mark_used()?;
+            self.mark_used(None)?;
             return Ok(());
         }
 
@@ -310,7 +311,14 @@ impl<'cfg> Source for GitSource<'cfg> {
         self.locked_rev = Some(actual_rev);
         self.path_source.as_mut().unwrap().update()?;
 
-        self.mark_used()?;
+        // Hopefully this shouldn't incur too much of a performance hit since
+        // most of this should already be in cache since it was just
+        // extracted.
+        //
+        // !.git is used because clones typically use hardlinks for the git
+        // contents. TODO: Verify behavior on Windows.
+        let size = cargo_util::du(&checkout_path, &["!.git"])?;
+        self.mark_used(Some(size))?;
         Ok(())
     }
 
@@ -320,7 +328,7 @@ impl<'cfg> Source for GitSource<'cfg> {
             id,
             self.remote
         );
-        self.mark_used()?;
+        self.mark_used(None)?;
         self.path_source
             .as_mut()
             .expect("BUG: `update()` must be called before `get()`")

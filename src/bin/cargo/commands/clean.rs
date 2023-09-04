@@ -107,6 +107,11 @@ pub fn cli() -> Command {
             .value_name("SIZE"),
         )
         .arg(
+            opt("max-git-size",
+                "Deletes git dependency caches until the cache is under the given size (unstable")
+            .hide(true)
+            .value_name("SIZE"))
+        .arg(
             opt(
                 "max-download-size",
                 "Deletes downloaded cache data until the cache is under the given size (unstable)",
@@ -227,6 +232,7 @@ pub fn exec(config: &mut Config, args: &ArgMatches) -> CliResult {
         max_git_db_age: unstable_duration_opt("max-git-db-age")?,
         max_src_size: unstable_size_opt("max-src-size")?,
         max_crate_size: unstable_size_opt("max-crate-size")?,
+        max_git_size: unstable_size_opt("max-git-size")?,
         max_download_size: unstable_size_opt("max-download-size")?,
         max_target_age: unimplemented_duration_opt("max-target-age")?,
         max_shared_target_age: unimplemented_duration_opt("max-shared-target-age")?,
