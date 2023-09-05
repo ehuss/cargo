@@ -103,6 +103,14 @@ impl GcOpts {
             || self.max_download_size.is_some()
     }
 
+    /// Returns whether any download cache cleaning options based on size are set.
+    pub fn is_download_cache_size_set(&self) -> bool {
+        self.max_src_size.is_some()
+            || self.max_crate_size.is_some()
+            || self.max_git_size.is_some()
+            || self.max_download_size.is_some()
+    }
+
     /// Returns whether any target directory cleaning options are set.
     pub fn is_target_opt_set(&self) -> bool {
         self.max_target_size.is_some()
@@ -129,7 +137,7 @@ impl GcOpts {
     ///   list is filled in with whatever `--gc` option the user picked, and
     ///   then this function *merges* the settings between the requested
     ///   `--gc` option and any options that were explicitly specified.
-    /// * `AutoGcKind::All` is used in `cargo clean` when no options are
+    /// * [`AutoGcKind::All`] is used in `cargo clean` when no options are
     ///   specified.
     pub fn update_for_auto_gc(
         &mut self,

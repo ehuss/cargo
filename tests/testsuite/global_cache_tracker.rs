@@ -110,6 +110,9 @@ fn populate_cache(config: &Config, test_crates: &[(&str, u64, u64, u64)]) -> (Pa
     cache_dir.mkdir_p();
     src_dir.rm_rf();
     src_dir.mkdir_p();
+    paths::home()
+        .join(".cargo/registry/index/example.com-a6c4a5adcb232b9a")
+        .mkdir_p();
     let mut create = |name: &str, age, crate_size: u64, src_size: u64| {
         let crate_filename = InternedString::new(&format!("{name}.crate"));
         deferred.mark_registry_crate_used_stamp(
@@ -470,13 +473,17 @@ fn auto_gc_index() {
 
 #[cargo_test]
 fn auto_gc_git() {
-    // Deletes git checkouts and dbs.
+    // auto-gc should delete git checkouts and dbs.
+
+    // Returns the short git name of a a checkout.
     let short_id = |repo: &git2::Repository| -> String {
         let head = repo.revparse_single("HEAD").unwrap();
         let short_id = head.short_id().unwrap();
         short_id.as_str().unwrap().to_owned()
     };
 
+    // Set up a git dependency and fetch it and populate the database,
+    // 6 months in the past.
     let (git_project, git_repo) = git::new_repo("bar", |p| {
         p.file("Cargo.toml", &basic_manifest("bar", "1.0.0"))
             .file("src/lib.rs", "")
@@ -741,8 +748,6 @@ fn clean_gc_dry_run() {
         .run();
 
     let expected_files = "\
-        [..]/.cargo/registry/src/[..]/bar-1.0.0\n\
-        [..]/.cargo/registry/cache/[..]/bar-1.0.0.crate\n\
         [..]/.cargo/registry/index/[..]\n\
         [..]/.cargo/registry/src/[..]\n\
         [..]/.cargo/registry/cache/[..]\n\
@@ -774,8 +779,6 @@ fn clean_default_gc() {
         .masquerade_as_nightly_cargo(&["gc"])
         .with_stderr_unordered(
             "\
-[REMOVING] [ROOT]/home/.cargo/registry/src/[..]/bar-1.0.0
-[REMOVING] [ROOT]/home/.cargo/registry/cache/[..]/bar-1.0.0.crate
 [REMOVING] [ROOT]/home/.cargo/registry/index/[..]
 [REMOVING] [ROOT]/home/.cargo/registry/src/[..]
 [REMOVING] [ROOT]/home/.cargo/registry/cache/[..]
@@ -955,6 +958,9 @@ fn max_size_untracked_crate() {
     let config = ConfigBuilder::new().unstable_flag("gc").build();
     let cache = paths::home().join(".cargo/registry/cache/example.com-a6c4a5adcb232b9a");
     cache.mkdir_p();
+    paths::home()
+        .join(".cargo/registry/index/example.com-a6c4a5adcb232b9a")
+        .mkdir_p();
     // Create the `.crate files.
     let test_crates = [
         // name, size
@@ -1067,6 +1073,10 @@ fn max_size_untracked_src_from_clean() {
 #[cargo_test]
 fn max_download_size() {
     // --max-download-size
+    //
+    // This creates some sample crates of specific sizes, and then tries
+    // deleting at various specific size thresholds that exercise different
+    // edge conditions.
     let config = ConfigBuilder::new().unstable_flag("gc").build();
 
     let test_crates = [
@@ -1503,6 +1513,7 @@ fn clean_max_git_age() {
         .with_stderr(
             "\
 [REMOVING] [ROOT]/home/.cargo/git/db/git_a-[..]
+[REMOVING] [ROOT]/home/.cargo/git/checkouts/git_a-[..]
 [REMOVED] [..]
 ",
         )
@@ -1786,6 +1797,65 @@ fn clean_max_git_size_deletes_co_from_db() {
 [REMOVING] [ROOT]/home/.cargo/git/db/abc
 [REMOVING] [ROOT]/home/.cargo/git/checkouts/abc/co1
 [REMOVING] [ROOT]/home/.cargo/git/checkouts/abc/co0
+[REMOVED] [..]
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn handles_missing_index() {
+    // Checks behavior when index is missing.
+    let p = basic_foo_bar_project();
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .run();
+    paths::home().join(".cargo/registry/index").rm_rf();
+    cargo_process("clean -v --max-download-size=0 -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr_unordered(
+            "\
+[REMOVING] [ROOT]/home/.cargo/registry/cache/[..]
+[REMOVING] [ROOT]/home/.cargo/registry/src/[..]
+[REMOVED] [..]
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn handles_missing_git_db() {
+    // Checks behavior when git db is missing.
+    let git_project = git::new("bar", |p| {
+        p.file("Cargo.toml", &basic_manifest("bar", "1.0.0"))
+            .file("src/lib.rs", "")
+    });
+    let p = project()
+        .file(
+            "Cargo.toml",
+            &format!(
+                r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+
+                [dependencies]
+                bar = {{ git = '{}' }}
+            "#,
+                git_project.url()
+            ),
+        )
+        .file("src/lib.rs", "")
+        .build();
+    p.cargo("fetch -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .run();
+    paths::home().join(".cargo/git/db").rm_rf();
+    cargo_process("clean -v --max-git-size=0 -Zgc")
+        .masquerade_as_nightly_cargo(&["gc"])
+        .with_stderr(
+            "\
+[REMOVING] [ROOT]/home/.cargo/git/checkouts/[..]
 [REMOVED] [..]
 ",
         )
