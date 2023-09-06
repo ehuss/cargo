@@ -96,7 +96,7 @@
 
 use crate::core::gc::GcOpts;
 use crate::core::Verbosity;
-use crate::ops::{CleanContext, CleaningFolderBar};
+use crate::ops::CleanContext;
 use crate::util::cache_lock::CacheLockMode;
 use crate::util::interning::InternedString;
 use crate::util::sqlite::{self, basic_migration, Migration};
@@ -207,6 +207,22 @@ pub struct GitCheckout {
     /// This can be None when the size is unknown. See [`RegistrySrc::size`]
     /// for an explanation.
     pub size: Option<u64>,
+}
+
+/// Paths in the global cache.
+///
+/// Accessing these assumes a lock has already been acquired.
+struct BasePaths {
+    /// Root path to the index caches.
+    index: PathBuf,
+    /// Root path to the git DBs.
+    git_db: PathBuf,
+    /// Root path to the git checkouts.
+    git_co: PathBuf,
+    /// Root path to the `.crate` files.
+    crate_dir: PathBuf,
+    /// Root path to the `src` directories.
+    src: PathBuf,
 }
 
 /// Migrations which initialize the database, and can be used to evolve it over time.
@@ -508,57 +524,62 @@ impl GlobalCacheTracker {
         gc_opts: &GcOpts,
     ) -> CargoResult<()> {
         let config = clean_ctx.config;
+        let base_git_path = config.git_path().into_path_unlocked();
+        let base = BasePaths {
+            index: config.registry_index_path().into_path_unlocked(),
+            git_db: base_git_path.join("db"),
+            git_co: base_git_path.join("checkouts"),
+            crate_dir: config.registry_cache_path().into_path_unlocked(),
+            src: config.registry_source_path().into_path_unlocked(),
+        };
         let now = now();
         trace!("cleaning {gc_opts:?}");
         let tx = self.conn.transaction()?;
+        let mut delete_paths = Vec::new();
         // This can be an expensive operation, so only perform it if necessary.
-        let loose_paths = if gc_opts.is_download_cache_opt_set() {
+        if gc_opts.is_download_cache_opt_set() {
             // TODO: Investigate how slow this might be.
-            Self::sync_db_with_files(&tx, config, gc_opts.is_download_cache_size_set())
-                .with_context(|| "failed to sync tracking database")?
-        } else {
-            Vec::new()
-        };
-        let index_paths = gc_opts
-            .max_index_age
-            .map(|max_age| {
-                let max_age = now - max_age.as_secs();
-                Self::get_registry_index_to_clean(&tx, max_age)
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let src_paths = gc_opts
-            .max_src_age
-            .map(|max_age| {
-                let max_age = now - max_age.as_secs();
-                Self::get_registry_items_to_clean_age(&tx, max_age, "registry_src")
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let crate_paths = gc_opts
-            .max_crate_age
-            .map(|max_age| {
-                let max_age = now - max_age.as_secs();
-                Self::get_registry_items_to_clean_age(&tx, max_age, "registry_crate")
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let git_db_paths = gc_opts
-            .max_git_db_age
-            .map(|max_age| {
-                let max_age = now - max_age.as_secs();
-                Self::get_git_db_items_to_clean(&tx, max_age)
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let git_co_paths = gc_opts
-            .max_git_co_age
-            .map(|max_age| {
-                let max_age = now - max_age.as_secs();
-                Self::get_git_co_items_to_clean(&tx, max_age)
-            })
-            .transpose()?
-            .unwrap_or_default();
+            Self::sync_db_with_files(
+                &tx,
+                config,
+                &base,
+                gc_opts.is_download_cache_size_set(),
+                &mut delete_paths,
+            )
+            .with_context(|| "failed to sync tracking database")?
+        }
+        if let Some(max_age) = gc_opts.max_index_age {
+            let max_age = now - max_age.as_secs();
+            Self::get_registry_index_to_clean(&tx, max_age, &base, &mut delete_paths)?;
+        }
+        if let Some(max_age) = gc_opts.max_src_age {
+            let max_age = now - max_age.as_secs();
+            Self::get_registry_items_to_clean_age(
+                &tx,
+                max_age,
+                "registry_src",
+                &base.src,
+                &mut delete_paths,
+            )?;
+        }
+        if let Some(max_age) = gc_opts.max_crate_age {
+            let max_age = now - max_age.as_secs();
+            Self::get_registry_items_to_clean_age(
+                &tx,
+                max_age,
+                "registry_crate",
+                &base.crate_dir,
+                &mut delete_paths,
+            )?;
+        }
+        if let Some(max_age) = gc_opts.max_git_db_age {
+            let max_age = now - max_age.as_secs();
+            Self::get_git_db_items_to_clean(&tx, max_age, &base, &mut delete_paths)?;
+        }
+        if let Some(max_age) = gc_opts.max_git_co_age {
+            let max_age = now - max_age.as_secs();
+            Self::get_git_co_items_to_clean(&tx, max_age, &base.git_co, &mut delete_paths)?;
+        }
         // Size collection must happen after date collection so that dates
         // have precedence, since size constraints are a more blunt
         // instrument.
@@ -572,76 +593,32 @@ impl GlobalCacheTracker {
         // both the crate and src tracking, which requires combining them to
         // compute the size, and then separating them to calculate the correct
         // paths.
-        let mut size_crate_paths = gc_opts
-            .max_crate_size
-            .map(|max_size| Self::get_registry_items_to_clean_size(&tx, max_size, "registry_crate"))
-            .transpose()?
-            .unwrap_or_default();
-        let mut size_src_paths = gc_opts
-            .max_src_size
-            .map(|max_size| Self::get_registry_items_to_clean_size(&tx, max_size, "registry_src"))
-            .transpose()?
-            .unwrap_or_default();
-        let size_git_paths = gc_opts
-            .max_git_size
-            .map(|max_size| Self::get_git_items_to_clean_size(&tx, config, max_size))
-            .transpose()?
-            .unwrap_or_default();
+        if let Some(max_size) = gc_opts.max_crate_size {
+            Self::get_registry_items_to_clean_size(
+                &tx,
+                max_size,
+                "registry_crate",
+                &base.crate_dir,
+                &mut delete_paths,
+            )?;
+        }
+        if let Some(max_size) = gc_opts.max_src_size {
+            Self::get_registry_items_to_clean_size(
+                &tx,
+                max_size,
+                "registry_src",
+                &base.src,
+                &mut delete_paths,
+            )?;
+        }
+        if let Some(max_size) = gc_opts.max_git_size {
+            Self::get_git_items_to_clean_size(&tx, max_size, &base, &mut delete_paths)?;
+        }
+        if let Some(max_size) = gc_opts.max_download_size {
+            Self::get_registry_items_to_clean_size_both(&tx, max_size, &base, &mut delete_paths)?;
+        }
 
-        let (combined_src, combined_crate) = gc_opts
-            .max_download_size
-            .map(|max_size| Self::get_registry_items_to_clean_size_both(&tx, max_size))
-            .transpose()?
-            .unwrap_or_default();
-        size_crate_paths.extend(combined_crate);
-        size_src_paths.extend(combined_src);
-
-        let total = loose_paths.len()
-            + src_paths.len()
-            + crate_paths.len()
-            + index_paths.len()
-            + git_co_paths.len()
-            + git_db_paths.len()
-            + size_crate_paths.len()
-            + size_src_paths.len()
-            + size_git_paths.len();
-        let progress = CleaningFolderBar::new(config, total);
-        clean_ctx.set_progress(Box::new(progress));
-        for path in loose_paths {
-            clean_ctx.rm_rf(&path)?;
-        }
-        let base_src_path = config.registry_source_path().into_path_unlocked();
-        for path in src_paths.iter().chain(size_src_paths.iter()) {
-            clean_ctx.rm_rf(&base_src_path.join(path))?;
-        }
-        let base_crate_path = config.registry_cache_path().into_path_unlocked();
-        for path in crate_paths.iter().chain(size_crate_paths.iter()) {
-            clean_ctx.rm_rf(&base_crate_path.join(path))?;
-        }
-        let base_index_path = config.registry_index_path().into_path_unlocked();
-        for path in index_paths {
-            clean_ctx.rm_rf(&base_index_path.join(&path))?;
-            // Also delete .crate and src directories, since by definition
-            // they cannot be used without their index.
-
-            // TODO: Fixme, screws up max count.
-            clean_ctx.rm_rf(&base_src_path.join(&path))?;
-            clean_ctx.rm_rf(&base_crate_path.join(&path))?;
-        }
-        let base_git_path = config.git_path().into_path_unlocked();
-        let base_git_co_path = base_git_path.join("checkouts");
-        for path in git_co_paths {
-            clean_ctx.rm_rf(&base_git_co_path.join(path))?;
-        }
-        let base_git_db_path = base_git_path.join("db");
-        for path in git_db_paths {
-            clean_ctx.rm_rf(&base_git_db_path.join(&path))?;
-            // FIXME counts
-            clean_ctx.rm_rf(&base_git_co_path.join(&path))?;
-        }
-        for path in size_git_paths {
-            clean_ctx.rm_rf(&base_git_path.join(path))?;
-        }
+        clean_ctx.remove_paths(&delete_paths)?;
 
         if clean_ctx.dry_run {
             tx.rollback()?;
@@ -686,26 +663,20 @@ impl GlobalCacheTracker {
     /// expensive operation. Size computations are only done if `sync_size` is
     /// set since that adds an even larger expense.
     ///
-    /// Returns a list of paths that should be removed since they are orphaned
-    /// (for example, deleting `.crate` files if the corresponding index
-    /// doesn't exist).
+    /// Adds paths to `delete_paths` that should be removed since they are
+    /// orphaned (for example, deleting `.crate` files if the corresponding
+    /// index doesn't exist).
     fn sync_db_with_files(
         conn: &Connection,
         config: &Config,
+        base: &BasePaths,
         sync_size: bool,
-    ) -> CargoResult<Vec<PathBuf>> {
+        delete_paths: &mut Vec<PathBuf>,
+    ) -> CargoResult<()> {
         debug!("starting db sync");
-        let mut result = Vec::new();
-        let base_index_path = config.registry_index_path().into_path_unlocked();
-        let base_git_path = config.git_path().into_path_unlocked();
-        let base_git_db_path = base_git_path.join("db");
-        let base_git_co_path = base_git_path.join("checkouts");
-        let base_crate_path = config.registry_cache_path().into_path_unlocked();
-        let base_src_path = config.registry_source_path().into_path_unlocked();
-
         // For registry_index and git_db, add anything that is missing in the db.
-        Self::update_parent_for_missing_from_db(conn, "registry_index", &base_index_path)?;
-        Self::update_parent_for_missing_from_db(conn, "git_db", &base_git_db_path)?;
+        Self::update_parent_for_missing_from_db(conn, "registry_index", &base.index)?;
+        Self::update_parent_for_missing_from_db(conn, "git_db", &base.git_db)?;
 
         // For registry_crate, registry_src, and git_checkout, remove anything
         // from the db that isn't on disk.
@@ -714,16 +685,16 @@ impl GlobalCacheTracker {
             "registry_index",
             "registry_id",
             "registry_crate",
-            &base_crate_path,
+            &base.crate_dir,
         )?;
         Self::update_db_for_removed(
             conn,
             "registry_index",
             "registry_id",
             "registry_src",
-            &base_src_path,
+            &base.src,
         )?;
-        Self::update_db_for_removed(conn, "git_db", "git_id", "git_checkout", &base_git_co_path)?;
+        Self::update_db_for_removed(conn, "git_db", "git_id", "git_checkout", &base.git_co)?;
 
         // For registry_index and git_db, remove anything from the db that
         // isn't on disk.
@@ -733,28 +704,28 @@ impl GlobalCacheTracker {
         Self::update_db_parent_for_removed_from_disk(
             conn,
             "registry_index",
-            &base_index_path,
-            &[&base_crate_path, &base_src_path],
-            &mut result,
+            &base.index,
+            &[&base.crate_dir, &base.src],
+            delete_paths,
         )?;
         Self::update_db_parent_for_removed_from_disk(
             conn,
             "git_db",
-            &base_git_db_path,
-            &[&base_git_co_path],
-            &mut result,
+            &base.git_db,
+            &[&base.git_co],
+            delete_paths,
         )?;
 
         // For registry_crate, registry_src, and git_checkout, add anything
         // that is missing in the db.
-        Self::populate_untracked_crate(conn, &base_crate_path)?;
+        Self::populate_untracked_crate(conn, &base.crate_dir)?;
         Self::populate_untracked(
             conn,
             config,
             "registry_index",
             "registry_id",
             "registry_src",
-            &base_src_path,
+            &base.src,
             sync_size,
         )?;
         Self::populate_untracked(
@@ -763,7 +734,7 @@ impl GlobalCacheTracker {
             "git_db",
             "git_id",
             "git_checkout",
-            &base_git_co_path,
+            &base.git_co,
             sync_size,
         )?;
 
@@ -775,7 +746,7 @@ impl GlobalCacheTracker {
                 "registry_index",
                 "registry_id",
                 "registry_src",
-                &base_src_path,
+                &base.src,
             )?;
             Self::update_null_sizes(
                 conn,
@@ -783,10 +754,10 @@ impl GlobalCacheTracker {
                 "git_db",
                 "git_id",
                 "git_checkout",
-                &base_git_co_path,
+                &base.git_co,
             )?;
         }
-        Ok(result)
+        Ok(())
     }
 
     /// For parent tables, add any entries that are on disk but aren't tracked in the db.
@@ -847,7 +818,7 @@ impl GlobalCacheTracker {
         parent_table_name: &str,
         base_path: &Path,
         child_base_paths: &[&Path],
-        result: &mut Vec<PathBuf>,
+        delete_paths: &mut Vec<PathBuf>,
     ) -> CargoResult<()> {
         trace!("checking for db entries to remove from {parent_table_name}");
         let mut select_stmt =
@@ -865,7 +836,7 @@ impl GlobalCacheTracker {
                     let child_path = child_base.join(&id_name);
                     if child_path.exists() {
                         debug!("removing orphaned path {child_path:?}");
-                        result.push(child_path);
+                        delete_paths.push(child_path);
                     }
                 }
             }
@@ -1006,13 +977,15 @@ impl GlobalCacheTracker {
         Ok(())
     }
 
-    /// Returns relative paths to delete from either registry_crate or
-    /// registry_src whose last use is older than the given timestamp.
+    /// Adds paths to delete from either registry_crate or registry_src whose
+    /// last use is older than the given timestamp.
     fn get_registry_items_to_clean_age(
         conn: &Connection,
         max_age: Timestamp,
         table_name: &str,
-    ) -> CargoResult<Vec<PathBuf>> {
+        base_path: &Path,
+        delete_paths: &mut Vec<PathBuf>,
+    ) -> CargoResult<()> {
         debug!("cleaning {table_name} since {max_age:?}");
         let mut stmt = conn.prepare_cached(&format!(
             "DELETE FROM {table_name} WHERE timestamp < ?1
@@ -1027,24 +1000,22 @@ impl GlobalCacheTracker {
             .collect::<Result<Vec<_>, _>>()?;
         let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
         let id_map = Self::get_id_map(conn, "registry_index", &ids)?;
-        let paths = rows
-            .iter()
-            .map(|(id, name)| {
-                let encoded_registry_name = &id_map[&id];
-                encoded_registry_name.join(name)
-            })
-            .collect();
-        Ok(paths)
+        for (id, name) in rows {
+            let encoded_registry_name = &id_map[&id];
+            delete_paths.push(base_path.join(encoded_registry_name).join(name));
+        }
+        Ok(())
     }
 
-    /// Returns relative paths to delete from either `registry_crate` or
-    /// `registry_src` in order to keep the total size under the given max
-    /// size.
+    /// Adds paths to delete from either `registry_crate` or `registry_src` in
+    /// order to keep the total size under the given max size.
     fn get_registry_items_to_clean_size(
         conn: &Connection,
         max_size: u64,
         table_name: &str,
-    ) -> CargoResult<Vec<PathBuf>> {
+        base_path: &Path,
+        delete_paths: &mut Vec<PathBuf>,
+    ) -> CargoResult<()> {
         debug!("cleaning {table_name} till under {max_size:?}");
         let total_size: u64 = conn.query_row(
             &format!("SELECT coalesce(SUM(size), 0) FROM {table_name}"),
@@ -1052,7 +1023,7 @@ impl GlobalCacheTracker {
             |row| row.get(0),
         )?;
         if total_size <= max_size {
-            return Ok(Vec::new());
+            return Ok(());
         }
         // This SQL statement selects all of the rows ordered by timestamp,
         // and then uses a window function to keep a running total of the
@@ -1087,23 +1058,21 @@ impl GlobalCacheTracker {
         // Convert registry_id to the encoded registry name, and join those.
         let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
         let id_map = Self::get_id_map(conn, "registry_index", &ids)?;
-        let paths = rows
-            .iter()
-            .map(|(id, name)| {
-                let encoded_name = &id_map[&id];
-                encoded_name.join(name)
-            })
-            .collect();
-        Ok(paths)
+        for (id, name) in rows {
+            let encoded_name = &id_map[&id];
+            delete_paths.push(base_path.join(encoded_name).join(name));
+        }
+        Ok(())
     }
 
-    /// Returns relative paths to delete from both `registry_crate` and
-    /// `registry_src` in order to keep the total size under the given max
-    /// size.
+    /// Adds paths to delete from both `registry_crate` and `registry_src` in
+    /// order to keep the total size under the given max size.
     fn get_registry_items_to_clean_size_both(
         conn: &Connection,
         max_size: u64,
-    ) -> CargoResult<(Vec<PathBuf>, Vec<PathBuf>)> {
+        base: &BasePaths,
+        delete_paths: &mut Vec<PathBuf>,
+    ) -> CargoResult<()> {
         debug!("cleaning download till under {max_size:?}");
 
         // This SQL statement selects from both registry_src and
@@ -1143,35 +1112,33 @@ impl GlobalCacheTracker {
             .collect::<Result<Vec<(i64, i64, String, String, u64)>, _>>()?;
         let mut total_size: u64 = rows.iter().map(|r| r.4).sum();
         debug!("total download cache size appears to be {total_size}");
-        let mut src_result = Vec::new();
-        let mut crate_result = Vec::new();
         for (table, rowid, name, index_name, size) in rows {
             if total_size <= max_size {
                 break;
             }
             if table == 1 {
-                src_result.push(Path::new(&index_name).join(name));
+                delete_paths.push(base.src.join(index_name).join(name));
                 delete_src_stmt.execute([rowid])?;
             } else {
-                crate_result.push(Path::new(&index_name).join(name));
+                delete_paths.push(base.crate_dir.join(index_name).join(name));
                 delete_crate_stmt.execute([rowid])?;
             }
             // TODO: If delete crate, ensure src is also deleted.
             total_size -= size;
         }
-        Ok((src_result, crate_result))
+        Ok(())
     }
 
-    /// Returns paths to delete from the git cache, keeping the total size
-    /// under the give value.
+    /// Adds paths to delete from the git cache, keeping the total size under
+    /// the give value.
     ///
     /// Paths are relative to the `git` directory in the cache directory.
     fn get_git_items_to_clean_size(
         conn: &Connection,
-        config: &Config,
         max_size: u64,
-    ) -> CargoResult<Vec<PathBuf>> {
-        let base_git_db_path = config.git_path().into_path_unlocked().join("db");
+        base: &BasePaths,
+        delete_paths: &mut Vec<PathBuf>,
+    ) -> CargoResult<()> {
         debug!("cleaning git till under {max_size:?}");
 
         // Collect all the sizes from git_db and git_checkouts, and then sort them by timestamp.
@@ -1187,7 +1154,7 @@ impl GlobalCacheTracker {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         for info in &mut git_info {
-            let size = cargo_util::du(&base_git_db_path.join(&info.3), &[])?;
+            let size = cargo_util::du(&base.git_db.join(&info.3), &[])?;
             info.4 = size;
         }
 
@@ -1214,31 +1181,30 @@ impl GlobalCacheTracker {
         // behavior.
         git_info.sort_by(|a, b| (b.0, &b.3).cmp(&(a.0, &a.3)));
 
+        // Collect paths to delete.
         let mut delete_db_stmt = conn.prepare_cached("DELETE FROM git_db WHERE rowid = ?1")?;
         let mut delete_co_stmt =
             conn.prepare_cached("DELETE FROM git_checkout WHERE rowid = ?1")?;
         let mut total_size: u64 = git_info.iter().map(|r| r.4).sum();
         debug!("total git cache size appears to be {total_size}");
-        let mut result = Vec::new();
         while let Some((_timestamp, rowid, db_name, name, size)) = git_info.pop() {
             if total_size <= max_size {
                 break;
             }
             if let Some(db_name) = db_name {
-                result.push(Path::new("checkouts").join(db_name).join(name));
+                delete_paths.push(base.git_co.join(db_name).join(name));
                 delete_co_stmt.execute([rowid])?;
                 total_size -= size;
             } else {
-                let db_path = Path::new("db").join(name.clone());
                 total_size -= size;
-                result.push(db_path);
+                delete_paths.push(base.git_db.join(&name));
                 delete_db_stmt.execute([rowid])?;
                 // If the db is deleted, then all the checkouts must be deleted.
                 let mut i = 0;
                 while i < git_info.len() {
                     if git_info[i].2.as_deref() == Some(name.as_ref()) {
                         let (_, rowid, db_name, name, size) = git_info.remove(i);
-                        result.push(Path::new("checkouts").join(db_name.unwrap()).join(name));
+                        delete_paths.push(base.git_co.join(db_name.unwrap()).join(name));
                         delete_co_stmt.execute([rowid])?;
                         total_size -= size;
                     } else {
@@ -1247,34 +1213,42 @@ impl GlobalCacheTracker {
                 }
             }
         }
-        Ok(result)
+        Ok(())
     }
 
-    /// Returns relative paths to delete from `registry_index` whose last use is
-    /// older than the given timestamp.
+    /// Adds paths to delete from `registry_index` whose last use is older
+    /// than the given timestamp.
     fn get_registry_index_to_clean(
         conn: &Connection,
         max_age: Timestamp,
-    ) -> CargoResult<Vec<PathBuf>> {
+        base: &BasePaths,
+        delete_paths: &mut Vec<PathBuf>,
+    ) -> CargoResult<()> {
         debug!("cleaning index since {max_age:?}");
         let mut stmt = conn.prepare_cached(
             "DELETE FROM registry_index WHERE timestamp < ?1
                 RETURNING name",
         )?;
-        let paths = stmt
-            .query_map(params![max_age], |row| {
-                Ok(PathBuf::from(row.get_unwrap::<_, String>(0)))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(paths)
+        let mut rows = stmt.query([max_age])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get_unwrap(0);
+            delete_paths.push(base.index.join(&name));
+            // Also delete .crate and src directories, since by definition
+            // they cannot be used without their index.
+            delete_paths.push(base.src.join(&name));
+            delete_paths.push(base.crate_dir.join(&name));
+        }
+        Ok(())
     }
 
-    /// Returns relative paths to delete from `git_checkout` whose last use is
+    /// Adds paths to delete from `git_checkout` whose last use is
     /// older than the given timestamp.
     fn get_git_co_items_to_clean(
         conn: &Connection,
         max_age: Timestamp,
-    ) -> CargoResult<Vec<PathBuf>> {
+        base_path: &Path,
+        delete_paths: &mut Vec<PathBuf>,
+    ) -> CargoResult<()> {
         debug!("cleaning git co since {max_age:?}");
         let mut stmt = conn.prepare_cached(
             "DELETE FROM git_checkout WHERE timestamp < ?1
@@ -1289,33 +1263,35 @@ impl GlobalCacheTracker {
             .collect::<Result<Vec<_>, _>>()?;
         let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
         let id_map = Self::get_id_map(conn, "git_db", &ids)?;
-        let paths = rows
-            .iter()
-            .map(|(id, name)| {
-                let encoded_git_name = &id_map[&id];
-                encoded_git_name.join(name)
-            })
-            .collect();
-        Ok(paths)
+        for (id, name) in rows {
+            let encoded_git_name = &id_map[&id];
+            delete_paths.push(base_path.join(encoded_git_name).join(name));
+        }
+        Ok(())
     }
 
-    /// Returns relative paths to delete from either `git_db` in order to keep
-    /// the total size under the given max size.
+    /// Adds paths to delete from `git_db` in order to keep the total size
+    /// under the given max size.
     fn get_git_db_items_to_clean(
         conn: &Connection,
         max_age: Timestamp,
-    ) -> CargoResult<Vec<PathBuf>> {
+        base: &BasePaths,
+        delete_paths: &mut Vec<PathBuf>,
+    ) -> CargoResult<()> {
         debug!("cleaning git db since {max_age:?}");
         let mut stmt = conn.prepare_cached(
             "DELETE FROM git_db WHERE timestamp < ?1
                 RETURNING name",
         )?;
-        let paths = stmt
-            .query_map(params![max_age], |row| {
-                Ok(PathBuf::from(row.get_unwrap::<_, String>(0)))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(paths)
+        let mut rows = stmt.query([max_age])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get_unwrap(0);
+            delete_paths.push(base.git_db.join(&name));
+            // Also delete checkout directories, since by definition they
+            // cannot be used without their db.
+            delete_paths.push(base.git_co.join(&name));
+        }
+        Ok(())
     }
 }
 

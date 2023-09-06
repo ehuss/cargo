@@ -10,6 +10,7 @@ use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
 use crate::util::{human_readable_bytes, Config, Progress, ProgressStyle};
 use anyhow::bail;
+use std::path::PathBuf;
 
 use cargo_util::paths;
 use std::fs;
@@ -73,7 +74,7 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
             }
             // If the doc option is set, we just want to delete the doc directory.
             target_dir = target_dir.join("doc");
-            ctx.clean_entire_folder(&target_dir.into_path_unlocked())?;
+            ctx.remove_paths(&[target_dir.into_path_unlocked()])?;
         } else {
             let profiles = Profiles::new(&ws, opts.requested_profile)?;
 
@@ -91,7 +92,7 @@ pub fn clean(ws: CargoResult<Workspace<'_>>, opts: &CleanOptions<'_>) -> CargoRe
             // Note that we don't bother grabbing a lock here as we're just going to
             // blow it all away anyway.
             if opts.spec.is_empty() {
-                ctx.clean_entire_folder(&target_dir.into_path_unlocked())?;
+                ctx.remove_paths(&[target_dir.into_path_unlocked()])?;
             } else {
                 clean_specs(&mut ctx, &ws, &profiles, &opts.targets, &opts.spec)?;
             }
@@ -310,10 +311,6 @@ impl<'cfg> CleanContext<'cfg> {
         }
     }
 
-    pub fn set_progress(&mut self, progress: Box<dyn CleaningProgressBar + 'cfg>) {
-        self.progress = progress;
-    }
-
     /// Glob remove artifacts for the provided `package`
     ///
     /// Make sure the artifact is for `package` and not another crate that is prefixed by
@@ -359,8 +356,16 @@ impl<'cfg> CleanContext<'cfg> {
     }
 
     pub fn rm_rf(&mut self, path: &Path) -> CargoResult<()> {
-        let Ok(meta) = fs::symlink_metadata(path) else {
-            return Ok(());
+        let meta = match fs::symlink_metadata(path) {
+            Ok(meta) => meta,
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    self.config
+                        .shell()
+                        .warn(&format!("cannot access {}: {e}", path.display()))?;
+                }
+                return Ok(());
+            }
         };
 
         if self.dry_run {
@@ -438,15 +443,25 @@ impl<'cfg> CleanContext<'cfg> {
         )
     }
 
-    fn clean_entire_folder(&mut self, path: &Path) -> CargoResult<()> {
-        let num_paths = walkdir::WalkDir::new(path).into_iter().count();
+    /// Deletes all of the given paths, showing a progress bar as it proceeds.
+    ///
+    /// If any path does not exist, or is not accessible, this will not
+    /// generate an error. This only generates an error for other issues, like
+    /// not being able to write to the console.
+    pub fn remove_paths(&mut self, paths: &[PathBuf]) -> CargoResult<()> {
+        let num_paths = paths
+            .iter()
+            .map(|path| walkdir::WalkDir::new(path).into_iter().count())
+            .sum();
         self.progress = Box::new(CleaningFolderBar::new(self.config, num_paths));
-        self.rm_rf(path)?;
+        for path in paths {
+            self.rm_rf(path)?;
+        }
         Ok(())
     }
 }
 
-pub trait CleaningProgressBar {
+trait CleaningProgressBar {
     fn display_now(&mut self) -> CargoResult<()>;
     fn on_clean(&mut self) -> CargoResult<()>;
     fn on_cleaning_package(&mut self, _package: &str) -> CargoResult<()> {
@@ -454,7 +469,7 @@ pub trait CleaningProgressBar {
     }
 }
 
-pub struct CleaningFolderBar<'cfg> {
+struct CleaningFolderBar<'cfg> {
     bar: Progress<'cfg>,
     max: usize,
     cur: usize,
