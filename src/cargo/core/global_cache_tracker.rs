@@ -113,6 +113,12 @@ use tracing::{debug, trace};
 /// The filename of the database.
 const GLOBAL_CACHE_FILENAME: &str = ".global-cache";
 
+const REGISTRY_INDEX_TABLE: &str = "registry_index";
+const REGISTRY_CRATE_TABLE: &str = "registry_crate";
+const REGISTRY_SRC_TABLE: &str = "registry_src";
+const GIT_DB_TABLE: &str = "git_db";
+const GIT_CO_TABLE: &str = "git_checkout";
+
 /// Type for timestamps as stored in the database.
 ///
 /// These are seconds since the Unix epoch.
@@ -557,7 +563,7 @@ impl GlobalCacheTracker {
             Self::get_registry_items_to_clean_age(
                 &tx,
                 max_age,
-                "registry_src",
+                REGISTRY_SRC_TABLE,
                 &base.src,
                 &mut delete_paths,
             )?;
@@ -567,7 +573,7 @@ impl GlobalCacheTracker {
             Self::get_registry_items_to_clean_age(
                 &tx,
                 max_age,
-                "registry_crate",
+                REGISTRY_CRATE_TABLE,
                 &base.crate_dir,
                 &mut delete_paths,
             )?;
@@ -597,7 +603,7 @@ impl GlobalCacheTracker {
             Self::get_registry_items_to_clean_size(
                 &tx,
                 max_size,
-                "registry_crate",
+                REGISTRY_CRATE_TABLE,
                 &base.crate_dir,
                 &mut delete_paths,
             )?;
@@ -606,7 +612,7 @@ impl GlobalCacheTracker {
             Self::get_registry_items_to_clean_size(
                 &tx,
                 max_size,
-                "registry_src",
+                REGISTRY_SRC_TABLE,
                 &base.src,
                 &mut delete_paths,
             )?;
@@ -675,26 +681,26 @@ impl GlobalCacheTracker {
     ) -> CargoResult<()> {
         debug!("starting db sync");
         // For registry_index and git_db, add anything that is missing in the db.
-        Self::update_parent_for_missing_from_db(conn, "registry_index", &base.index)?;
-        Self::update_parent_for_missing_from_db(conn, "git_db", &base.git_db)?;
+        Self::update_parent_for_missing_from_db(conn, REGISTRY_INDEX_TABLE, &base.index)?;
+        Self::update_parent_for_missing_from_db(conn, GIT_DB_TABLE, &base.git_db)?;
 
         // For registry_crate, registry_src, and git_checkout, remove anything
         // from the db that isn't on disk.
         Self::update_db_for_removed(
             conn,
-            "registry_index",
+            REGISTRY_INDEX_TABLE,
             "registry_id",
-            "registry_crate",
+            REGISTRY_CRATE_TABLE,
             &base.crate_dir,
         )?;
         Self::update_db_for_removed(
             conn,
-            "registry_index",
+            REGISTRY_INDEX_TABLE,
             "registry_id",
-            "registry_src",
+            REGISTRY_SRC_TABLE,
             &base.src,
         )?;
-        Self::update_db_for_removed(conn, "git_db", "git_id", "git_checkout", &base.git_co)?;
+        Self::update_db_for_removed(conn, GIT_DB_TABLE, "git_id", GIT_CO_TABLE, &base.git_co)?;
 
         // For registry_index and git_db, remove anything from the db that
         // isn't on disk.
@@ -703,14 +709,14 @@ impl GlobalCacheTracker {
         // respective parent on disk.
         Self::update_db_parent_for_removed_from_disk(
             conn,
-            "registry_index",
+            REGISTRY_INDEX_TABLE,
             &base.index,
             &[&base.crate_dir, &base.src],
             delete_paths,
         )?;
         Self::update_db_parent_for_removed_from_disk(
             conn,
-            "git_db",
+            GIT_DB_TABLE,
             &base.git_db,
             &[&base.git_co],
             delete_paths,
@@ -722,18 +728,18 @@ impl GlobalCacheTracker {
         Self::populate_untracked(
             conn,
             config,
-            "registry_index",
+            REGISTRY_INDEX_TABLE,
             "registry_id",
-            "registry_src",
+            REGISTRY_SRC_TABLE,
             &base.src,
             sync_size,
         )?;
         Self::populate_untracked(
             conn,
             config,
-            "git_db",
+            GIT_DB_TABLE,
             "git_id",
-            "git_checkout",
+            GIT_CO_TABLE,
             &base.git_co,
             sync_size,
         )?;
@@ -743,17 +749,17 @@ impl GlobalCacheTracker {
             Self::update_null_sizes(
                 conn,
                 config,
-                "registry_index",
+                REGISTRY_INDEX_TABLE,
                 "registry_id",
-                "registry_src",
+                REGISTRY_SRC_TABLE,
                 &base.src,
             )?;
             Self::update_null_sizes(
                 conn,
                 config,
-                "git_db",
+                GIT_DB_TABLE,
                 "git_id",
-                "git_checkout",
+                GIT_CO_TABLE,
                 &base.git_co,
             )?;
         }
@@ -857,7 +863,7 @@ impl GlobalCacheTracker {
         let now = now();
         let index_names = Self::names_from(&base_path)?;
         for index_name in index_names {
-            let Some(id) = Self::id_from_name(conn, "registry_index", &index_name)? else {
+            let Some(id) = Self::id_from_name(conn, REGISTRY_INDEX_TABLE, &index_name)? else {
                 // The id is missing from the database. This should be resolved
                 // via update_db_parent_for_removed_from_disk.
                 continue;
@@ -999,7 +1005,7 @@ impl GlobalCacheTracker {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
-        let id_map = Self::get_id_map(conn, "registry_index", &ids)?;
+        let id_map = Self::get_id_map(conn, REGISTRY_INDEX_TABLE, &ids)?;
         for (id, name) in rows {
             let encoded_registry_name = &id_map[&id];
             delete_paths.push(base_path.join(encoded_registry_name).join(name));
@@ -1057,7 +1063,7 @@ impl GlobalCacheTracker {
             .collect::<Result<Vec<_>, _>>()?;
         // Convert registry_id to the encoded registry name, and join those.
         let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
-        let id_map = Self::get_id_map(conn, "registry_index", &ids)?;
+        let id_map = Self::get_id_map(conn, REGISTRY_INDEX_TABLE, &ids)?;
         for (id, name) in rows {
             let encoded_name = &id_map[&id];
             delete_paths.push(base_path.join(encoded_name).join(name));
@@ -1262,7 +1268,7 @@ impl GlobalCacheTracker {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         let ids: Vec<_> = rows.iter().map(|r| r.0).collect();
-        let id_map = Self::get_id_map(conn, "git_db", &ids)?;
+        let id_map = Self::get_id_map(conn, GIT_DB_TABLE, &ids)?;
         for (id, name) in rows {
             let encoded_git_name = &id_map[&id];
             delete_paths.push(base_path.join(encoded_git_name).join(name));
@@ -1603,7 +1609,7 @@ impl DeferredGlobalLastUse {
             None => {
                 let Some(id) = GlobalCacheTracker::id_from_name(
                     conn,
-                    "registry_index",
+                    REGISTRY_INDEX_TABLE,
                     &encoded_registry_name,
                 )?
                 else {
@@ -1623,7 +1629,8 @@ impl DeferredGlobalLastUse {
         match self.git_keys.get(&encoded_git_name) {
             Some(i) => Ok(*i),
             None => {
-                let Some(id) = GlobalCacheTracker::id_from_name(conn, "git_db", &encoded_git_name)?
+                let Some(id) =
+                    GlobalCacheTracker::id_from_name(conn, GIT_DB_TABLE, &encoded_git_name)?
                 else {
                     bail!("expected git_db {encoded_git_name} to exist, but wasn't found")
                 };
@@ -1679,7 +1686,7 @@ fn du(path: &Path, table_name: &str) -> CargoResult<u64> {
     // !.git is used because clones typically use hardlinks for the git
     // contents. TODO: Verify behavior on Windows.
     // TODO: Or even better, switch to worktrees, and remove this.
-    let patterns = if table_name == "git_checkout" {
+    let patterns = if table_name == GIT_CO_TABLE {
         &["!.git"][..]
     } else {
         &[][..]
