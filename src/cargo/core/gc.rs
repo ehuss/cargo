@@ -350,13 +350,13 @@ fn parse_time_span_for_config(config_name: &str, span: &str) -> CargoResult<Dura
 /// Returns None if the value is not valid. See [`parse_time_span`] if you
 /// need a variant that generates an error message.
 fn maybe_parse_time_span(span: &str) -> Option<Duration> {
-    let Some((left, right)) = span.split_once(' ') else {
+    let Some(right_i) = span.find(|c: char| !c.is_ascii_digit()) else {
         return None;
     };
-    // This isn't strictly necessary, but it does help prevent `+` prefix
-    // which I would rather not include.
-    if !left.chars().all(|c| c.is_ascii_digit()) {
-        return None;
+    let left = &span[..right_i];
+    let mut right = &span[right_i..];
+    if right.starts_with(' ') {
+        right = &right[1..];
     }
     let count: u64 = left.parse().ok()?;
     let factor = match right {
@@ -476,6 +476,7 @@ mod tests {
     fn time_spans() {
         let d = |x| Some(Duration::from_secs(x));
         assert_eq!(maybe_parse_time_span("0 seconds"), d(0));
+        assert_eq!(maybe_parse_time_span("1second"), d(1));
         assert_eq!(maybe_parse_time_span("23 seconds"), d(23));
         assert_eq!(maybe_parse_time_span("5 minutes"), d(60 * 5));
         assert_eq!(maybe_parse_time_span("2 hours"), d(60 * 60 * 2));
@@ -492,6 +493,7 @@ mod tests {
     fn time_span_errors() {
         assert_eq!(maybe_parse_time_span(""), None);
         assert_eq!(maybe_parse_time_span("1"), None);
+        assert_eq!(maybe_parse_time_span("second"), None);
         assert_eq!(maybe_parse_time_span("+2 seconds"), None);
         assert_eq!(maybe_parse_time_span("day"), None);
         assert_eq!(maybe_parse_time_span("-1 days"), None);
@@ -501,6 +503,7 @@ mod tests {
         assert_eq!(maybe_parse_time_span("never"), None);
         assert_eq!(maybe_parse_time_span("1 day "), None);
         assert_eq!(maybe_parse_time_span(" 1 day"), None);
+        assert_eq!(maybe_parse_time_span("1  second"), None);
 
         let e = parse_time_span_for_config("gc.auto.max-src-age", "-1 days").unwrap_err();
         assert_eq!(
@@ -534,6 +537,7 @@ mod tests {
         assert_eq!(parse_human_size("1mib").unwrap(), 1_048_576);
         assert_eq!(parse_human_size("1gib").unwrap(), 1_073_741_824);
         assert_eq!(parse_human_size("1.5kb").unwrap(), 1_500);
+        assert_eq!(parse_human_size("1.7b").unwrap(), 1);
 
         assert!(parse_human_size("").is_err());
         assert!(parse_human_size("x").is_err());
@@ -541,5 +545,6 @@ mod tests {
         assert!(parse_human_size("1 2").is_err());
         assert!(parse_human_size("1.5").is_err());
         assert!(parse_human_size("+1").is_err());
+        assert!(parse_human_size("123  b").is_err());
     }
 }
