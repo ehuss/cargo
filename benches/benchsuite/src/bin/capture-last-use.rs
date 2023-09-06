@@ -85,7 +85,7 @@ fn main() {
             let src = global_cache_tracker::RegistrySrc {
                 encoded_registry_name,
                 package_dir: krate.file_name().to_string_lossy().as_ref().into(),
-                size: Some(cargo_util::paths::du(&krate.path()).unwrap()),
+                size: Some(cargo_util::du(&krate.path(), &[]).unwrap()),
             };
             src_entries.push(src.clone());
             let timestamp = meta.modified().unwrap();
@@ -104,6 +104,7 @@ fn main() {
                 global_cache_tracker::GitCheckout {
                     encoded_git_name,
                     short_name: co.file_name().to_string_lossy().as_ref().into(),
+                    size: Some(cargo_util::du(&co.path(), &[]).unwrap()),
                 },
                 Some(&meta.modified().unwrap()),
             );
