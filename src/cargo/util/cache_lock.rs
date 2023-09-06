@@ -225,6 +225,10 @@ macro_rules! do_try_exclusive_lock {
 }
 
 /// Macro to help with acquiring a lock.
+///
+/// `shared` and `exclusive` are inputs to the macro so that either the
+/// blocking or non-blocking implementations can be called based on what the
+/// caller wants.
 macro_rules! do_lock {
     ($self: ident, $config: expr, $mode: expr, $shared: ident, $exclusive: ident) => {
         use CacheLockMode::*;
@@ -235,11 +239,13 @@ macro_rules! do_lock {
             $self.mutate_is_exclusive,
         ) {
             (Shared, 0, 0, _) => {
+                // Shared lock, no locks currently held.
                 $shared!($self, $config, mutate_lock, MUTATE_NAME, SHARED_DESCR);
                 $self.mutate_lock_count += 1;
                 $self.mutate_is_exclusive = false;
             }
             (DownloadExclusive, 0, _, _) => {
+                // DownloadExclusive lock, no DownloadExclusive lock currently held.
                 $exclusive!(
                     $self,
                     $config,
@@ -250,6 +256,7 @@ macro_rules! do_lock {
                 $self.cache_lock_count += 1;
             }
             (MutateExclusive, 0, 0, _) => {
+                // MutateExclusive lock, no locks currently held.
                 $exclusive!(
                     $self,
                     $config,
@@ -260,6 +267,9 @@ macro_rules! do_lock {
                 $self.mutate_lock_count += 1;
                 $self.mutate_is_exclusive = true;
 
+                // Part of the contract of MutateExclusive is that it doesn't
+                // allow any processes to have a lock on the package cache, so
+                // this acquires both locks.
                 if let Err(e) = $exclusive!(
                     $self,
                     $config,
@@ -273,6 +283,8 @@ macro_rules! do_lock {
                 $self.cache_lock_count += 1;
             }
             (Shared, 1.., 0, _) => {
+                // Shared lock, when a DownloadExclusive is held.
+                //
                 // This isn't supported because it could cause a deadlock. If
                 // one cargo is attempting to acquire a MutateExclusive lock,
                 // and acquires the mutate lock, but is blocked on the
@@ -282,22 +294,31 @@ macro_rules! do_lock {
                 panic!("shared lock while holding download lock is not allowed");
             }
             (MutateExclusive, _, 1.., false) => {
+                // MutateExclusive lock, when a Shared lock is held.
+                //
                 // Lock upgrades are dicey. It might be possible to support
                 // this but would take a bit of work, and so far it isn't
                 // needed.
                 panic!("lock upgrade from Shared to MutateExclusive not supported");
             }
             (Shared, _, 1.., _) => {
+                // Shared lock, when a Shared or MutateExclusive lock is held.
+                //
+                // MutateExclusive is more restrictive than Shared, so no need
+                // to do anything.
                 $self.mutate_lock_count = $self.mutate_lock_count.checked_add(1).unwrap();
             }
             (DownloadExclusive, 1.., _, _) => {
+                // DownloadExclusive lock, when another DownloadExclusive is held.
                 $self.cache_lock_count = $self.cache_lock_count.checked_add(1).unwrap();
             }
             (MutateExclusive, _, 1.., true) => {
+                // MutateExclusive lock, when another MutateExclusive is held.
                 $self.cache_lock_count += 1;
                 $self.mutate_lock_count += 1;
             }
             (MutateExclusive, 1.., 0, _) => {
+                // MutateExclusive lock, when only a DownloadExclusive is held.
                 $exclusive!(
                     $self,
                     $config,

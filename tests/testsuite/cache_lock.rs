@@ -272,7 +272,7 @@ fn mutate_then_shared_separate() {
     a_then_b_separate_blocked(CacheLockMode::MutateExclusive, CacheLockMode::Shared);
 }
 
-#[cargo_test]
+#[cargo_test(ignore_windows = "no method to prevent creating or locking a file")]
 fn mutate_err_is_atomic() {
     // Verifies that when getting a mutate lock, that if the first lock
     // succeeds, but the second one fails, that the first lock is released.
@@ -282,6 +282,8 @@ fn mutate_err_is_atomic() {
     let cache_path = cargo_home.join(".package-cache");
     // This is a hacky way to force an error acquiring the download lock. By
     // making it a directory, it is unable to open it.
+    // TODO: Unfortunately this doesn't work on Windows. I don't have any
+    // ideas on how to simulate an error on Windows.
     cache_path.mkdir_p();
     match locker.lock(&config, CacheLockMode::MutateExclusive) {
         Ok(_) => panic!("did not expect lock to succeed"),

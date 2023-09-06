@@ -610,6 +610,7 @@ fn auto_gc_various_commands() {
         assert_eq!(crates.len(), 0);
         let srcs = tracker.registry_src_all().unwrap();
         assert_eq!(srcs.len(), 0);
+        drop(tracker);
         drop(lock);
         paths::home().join(".cargo/registry").rm_rf();
         GlobalCacheTracker::db_path(&config)
@@ -676,6 +677,7 @@ fn updates_last_use_various_commands() {
         assert_eq!(crates.len(), expected_crates);
         let srcs = tracker.registry_src_all().unwrap();
         assert_eq!(srcs.len(), expected_crates);
+        drop(tracker);
         drop(lock);
         paths::home().join(".cargo/registry").rm_rf();
         GlobalCacheTracker::db_path(&config)
