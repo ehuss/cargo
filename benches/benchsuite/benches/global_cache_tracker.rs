@@ -8,6 +8,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// Samples of real-world data.
 const GLOBAL_CACHE_SAMPLE: &str = "global-cache-tracker/global-cache-sample";
 const GLOBAL_CACHE_RANDOM: &str = "global-cache-tracker/random-sample";
 
