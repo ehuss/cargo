@@ -119,6 +119,13 @@ const REGISTRY_SRC_TABLE: &str = "registry_src";
 const GIT_DB_TABLE: &str = "git_db";
 const GIT_CO_TABLE: &str = "git_checkout";
 
+/// How often timestamps will be updated.
+///
+/// As an optimization timestamps are not updated unless they are older than
+/// the given number of seconds. This helps reduce the amount of disk I/O when
+/// running cargo multiple times within a short window.
+const UPDATE_RESOLUTION: u64 = 60 * 5;
+
 /// Type for timestamps as stored in the database.
 ///
 /// These are seconds since the Unix epoch.
@@ -1313,6 +1320,65 @@ impl GlobalCacheTracker {
     }
 }
 
+/// Helper to generate the upsert for the parent tables.
+///
+/// This handles checking if the row already exists, and only updates the
+/// timestamp it if it hasn't been updated recently. This also handles keeping
+/// a cached map of the `id` value.
+///
+/// Unfortunately it is a bit tricky to share this code without a macro.
+macro_rules! insert_or_update_parent {
+    ($self:expr, $conn:expr, $table_name:expr, $timestamps_field:ident, $keys_field:ident, $encoded_name:ident) => {
+        let mut select_stmt = $conn.prepare_cached(concat!(
+            "SELECT id, timestamp FROM ",
+            $table_name,
+            " WHERE name = ?1"
+        ))?;
+        let mut insert_stmt = $conn.prepare_cached(concat!(
+            "INSERT INTO ",
+            $table_name,
+            " (name, timestamp)
+                VALUES (?1, ?2)
+                ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
+                RETURNING id",
+        ))?;
+        let mut update_stmt = $conn.prepare_cached(concat!(
+            "UPDATE ",
+            $table_name,
+            " SET timestamp = ?1 WHERE id = ?2"
+        ))?;
+        for (parent, new_timestamp) in std::mem::take(&mut $self.$timestamps_field) {
+            trace!(
+                concat!("insert ", $table_name, " {:?} {}"),
+                parent,
+                new_timestamp
+            );
+            let mut rows = select_stmt.query([parent.$encoded_name])?;
+            let id = if let Some(row) = rows.next()? {
+                let id: i64 = row.get_unwrap(0);
+                let timestamp: Timestamp = row.get_unwrap(1);
+                if timestamp < new_timestamp - UPDATE_RESOLUTION {
+                    update_stmt.execute(params![new_timestamp, id])?;
+                }
+                id
+            } else {
+                insert_stmt.query_row(params![parent.$encoded_name, new_timestamp], |row| {
+                    row.get(0)
+                })?
+            };
+            match $self.$keys_field.entry(parent.$encoded_name) {
+                hash_map::Entry::Occupied(o) => {
+                    assert_eq!(*o.get(), id);
+                }
+                hash_map::Entry::Vacant(v) => {
+                    v.insert(id);
+                }
+            }
+        }
+        return Ok(());
+    };
+}
+
 impl DeferredGlobalLastUse {
     pub fn new() -> DeferredGlobalLastUse {
         DeferredGlobalLastUse {
@@ -1490,51 +1556,27 @@ impl DeferredGlobalLastUse {
     /// Flushes all of the `registry_index_timestamps` to the database,
     /// clearing `registry_index_timestamps`.
     fn insert_registry_index_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
-        let mut stmt = conn.prepare_cached(
-            "INSERT INTO registry_index (name, timestamp)
-                VALUES (?1, ?2)
-                ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
-                RETURNING id",
-        )?;
-        for (index, timestamp) in std::mem::take(&mut self.registry_index_timestamps) {
-            trace!("insert registry index {index:?} {timestamp}");
-            let id = stmt.query_row(params![index.encoded_registry_name, timestamp], |row| {
-                row.get(0)
-            })?;
-            match self.registry_keys.entry(index.encoded_registry_name) {
-                hash_map::Entry::Occupied(o) => {
-                    assert_eq!(*o.get(), id);
-                }
-                hash_map::Entry::Vacant(v) => {
-                    v.insert(id);
-                }
-            }
-        }
-        Ok(())
+        insert_or_update_parent!(
+            self,
+            conn,
+            "registry_index",
+            registry_index_timestamps,
+            registry_keys,
+            encoded_registry_name
+        );
     }
 
     /// Flushes all of the `git_db_timestamps` to the database,
     /// clearing `registry_index_timestamps`.
     fn insert_git_db_from_cache(&mut self, conn: &Connection) -> CargoResult<()> {
-        let mut stmt = conn.prepare_cached(
-            "INSERT INTO git_db (name, timestamp)
-                VALUES (?1, ?2)
-                ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
-                RETURNING id",
-        )?;
-        for (git_db, timestamp) in std::mem::take(&mut self.git_db_timestamps) {
-            trace!("insert git db used {git_db:?} {timestamp}");
-            let id = stmt.query_row(params![git_db.encoded_git_name, timestamp], |row| {
-                row.get(0)
-            })?;
-            match self.git_keys.entry(git_db.encoded_git_name) {
-                hash_map::Entry::Occupied(o) => assert_eq!(*o.get(), id),
-                hash_map::Entry::Vacant(v) => {
-                    v.insert(id);
-                }
-            }
-        }
-        Ok(())
+        insert_or_update_parent!(
+            self,
+            conn,
+            "git_db",
+            git_db_timestamps,
+            git_keys,
+            encoded_git_name
+        );
     }
 
     /// Flushes all of the `registry_crate_timestamps` to the database,
@@ -1547,13 +1589,16 @@ impl DeferredGlobalLastUse {
             let mut stmt = conn.prepare_cached(
                 "INSERT INTO registry_crate (registry_id, name, size, timestamp)
                  VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
+                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
+                    WHERE timestamp < ?5
+                 ",
             )?;
             stmt.execute(params![
                 registry_id,
                 registry_crate.crate_filename,
                 registry_crate.size,
-                timestamp
+                timestamp,
+                timestamp - UPDATE_RESOLUTION
             ])?;
         }
         Ok(())
@@ -1569,17 +1614,16 @@ impl DeferredGlobalLastUse {
             let mut stmt = conn.prepare_cached(
                 "INSERT INTO registry_src (registry_id, name, size, timestamp)
                  VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
+                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
+                    WHERE timestamp < ?5
+                 ",
             )?;
-            debug!(
-                "inserting registry_src {:?} {:?}",
-                registry_src.package_dir, timestamp
-            );
             stmt.execute(params![
                 registry_id,
                 registry_src.package_dir,
                 registry_src.size,
-                timestamp
+                timestamp,
+                timestamp - UPDATE_RESOLUTION
             ])?;
         }
 
@@ -1595,13 +1639,15 @@ impl DeferredGlobalLastUse {
             let mut stmt = conn.prepare_cached(
                 "INSERT INTO git_checkout (git_id, name, size, timestamp)
                  VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp",
+                 ON CONFLICT DO UPDATE SET timestamp=excluded.timestamp
+                    WHERE timestamp < ?5",
             )?;
             stmt.execute(params![
                 git_id,
                 git_checkout.short_name,
                 git_checkout.size,
-                timestamp
+                timestamp,
+                timestamp - UPDATE_RESOLUTION
             ])?;
         }
 
