@@ -84,6 +84,8 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
     - run: cargo test -p cargo --test testsuite -- https::github_works
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
     - run: gh api rate_limit
       env:
         GH_TOKEN: ${{ github.token }}
