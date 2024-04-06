@@ -80,4 +80,10 @@ jobs:
     # - name: Configure extra test environment
     #   run: echo CARGO_CONTAINER_TESTS=1 >> $GITHUB_ENV
     #   if: matrix.os == 'ubuntu-latest'
+    - run: gh api rate_limit
+      env:
+        GH_TOKEN: ${{ github.token }}
     - run: cargo test -p cargo --test testsuite -- https::github_works
+    - run: gh api rate_limit
+      env:
+        GH_TOKEN: ${{ github.token }}
