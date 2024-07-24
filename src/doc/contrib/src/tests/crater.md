@@ -58,9 +58,7 @@ Roughly the steps are:
    This will run much faster.
    You can do a full run afterwards.
 
-   After the try build finishes (which should take a couple hours), ask someone to make a crater run.
-   The Cargo team does not have that permission, so just ask someone on Zulip.
-   They will need to write a comment to `@craterbot` with the command that you have specified.
+   After the try build finishes (which should take a couple hours), add the crater job by writing a comment to `@craterbot` with the command that you want (all Cargo team members should have permission to do this).
 
 8. Wait.
 
