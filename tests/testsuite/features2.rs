@@ -2816,3 +2816,106 @@ fn dont_unify_proc_macro_example_from_dependency() {
 "#]])
         .run();
 }
+
+#[cargo_test]
+fn no_default_workspace_with_default_dev_dep() {
+    // This is a bit of a convoluted example where the resolver was thinking
+    // that dev-dependencies were always needed when running `cargo test`. But
+    // when a workspace member is both a regular member and a dependency, when
+    // used as a dependency we don't want to activate its dev-dependencies.
+    //
+    // See https://github.com/rust-lang/cargo/issues/15490
+
+    Package::new("empty-library", "1.0.0").publish();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [workspace]
+                members = [ "mid", "subcrate"]
+                resolver = "2"
+
+                [package]
+                name = "foo"
+                edition = "2024"
+
+                [dependencies]
+                mid = { path = "mid" }
+                subcrate = { path = "subcrate", default-features = false }
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file(
+            "mid/Cargo.toml",
+            r#"
+                [package]
+                name = "mid"
+                edition = "2024"
+
+                [dev-dependencies]
+                subcrate = { path = "../subcrate", default-features = false }
+
+                [features]
+                default = ["subcrate/empty-library"]
+            "#,
+        )
+        .file("mid/src/lib.rs", "")
+        .file(
+            "subcrate/Cargo.toml",
+            r#"
+                [package]
+                name = "subcrate"
+                edition = "2024"
+
+                [build-dependencies]
+                empty-library = { version = "1", optional = true }
+
+                [features]
+                default = ["empty-library"]
+            "#,
+        )
+        .file("subcrate/src/lib.rs", "")
+        .file(
+            "subcrate/build.rs",
+            r#"
+                #[cfg(feature = "empty-library")] extern crate empty_library as _;
+                fn main() {}
+            "#,
+        )
+        .build();
+
+    p.cargo("test --no-run --workspace")
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[LOCKING] 1 package to latest compatible version
+[DOWNLOADING] crates ...
+[DOWNLOADED] empty-library v1.0.0 (registry `dummy-registry`)
+[COMPILING] empty-library v1.0.0
+[COMPILING] mid v0.0.0 ([ROOT]/foo/mid)
+[COMPILING] subcrate v0.0.0 ([ROOT]/foo/subcrate)
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[EXECUTABLE] unittests src/lib.rs (target/debug/deps/foo-[HASH])
+[EXECUTABLE] unittests src/lib.rs (target/debug/deps/mid-[HASH])
+[EXECUTABLE] unittests src/lib.rs (target/debug/deps/subcrate-[HASH])
+
+"#]])
+        .run();
+
+    p.cargo("test --no-run --workspace --no-default-features")
+        .with_stderr_data(str![[r#"
+[COMPILING] subcrate v0.0.0 ([ROOT]/foo/subcrate)
+error[E0463]: can't find crate for `empty_library`
+ --> subcrate/build.rs:2:51
+  |
+2 |                 #[cfg(feature = "empty-library")] extern crate empty_library as _;
+  |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ can't find crate
+
+For more information about this error, try `rustc --explain E0463`.
+[ERROR] could not compile `subcrate` (build script) due to 1 previous error
+
+"#]])
+        .with_status(101)
+        .run();
+}
