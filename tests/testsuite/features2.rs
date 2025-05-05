@@ -2906,16 +2906,13 @@ fn no_default_workspace_with_default_dev_dep() {
     p.cargo("test --no-run --workspace --no-default-features")
         .with_stderr_data(str![[r#"
 [COMPILING] subcrate v0.0.0 ([ROOT]/foo/subcrate)
-error[E0463]: can't find crate for `empty_library`
- --> subcrate/build.rs:2:51
-  |
-2 |                 #[cfg(feature = "empty-library")] extern crate empty_library as _;
-  |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ can't find crate
-
-For more information about this error, try `rustc --explain E0463`.
-[ERROR] could not compile `subcrate` (build script) due to 1 previous error
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[COMPILING] mid v0.0.0 ([ROOT]/foo/mid)
+[FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[EXECUTABLE] unittests src/lib.rs (target/debug/deps/foo-[HASH])
+[EXECUTABLE] unittests src/lib.rs (target/debug/deps/mid-[HASH])
+[EXECUTABLE] unittests src/lib.rs (target/debug/deps/subcrate-[HASH])
 
 "#]])
-        .with_status(101)
         .run();
 }

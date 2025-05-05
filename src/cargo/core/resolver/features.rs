@@ -67,7 +67,7 @@ pub struct ResolvedFeatures {
 }
 
 /// Options for how the feature resolver works.
-#[derive(Default)]
+#[derive(Debug)]
 pub struct FeatureOpts {
     /// Build deps and proc-macros will not share features with other dep kinds,
     /// and so won't artifact targets.
@@ -78,10 +78,24 @@ pub struct FeatureOpts {
     decouple_host_deps: bool,
     /// Dev dep features will not be activated unless needed.
     decouple_dev_deps: bool,
+    /// Whether or not we want dev-dependencies at all.
+    has_dev_units: HasDevUnits,
     /// Targets that are not in use will not activate features.
     ignore_inactive_targets: bool,
     /// If enabled, compare against old resolver (for testing).
     compare: bool,
+}
+
+impl Default for FeatureOpts {
+    fn default() -> Self {
+        FeatureOpts {
+            decouple_host_deps: false,
+            decouple_dev_deps: false,
+            has_dev_units: HasDevUnits::Yes,
+            ignore_inactive_targets: false,
+            compare: false,
+        }
+    }
 }
 
 /// Flag to indicate if Cargo is building *any* dev units (tests, examples, etc.).
@@ -91,7 +105,7 @@ pub struct FeatureOpts {
 /// dependencies are computed, and can result in longer build times with
 /// `cargo test` because the lib may need to be built 3 times instead of
 /// twice.
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum HasDevUnits {
     Yes,
     No,
@@ -198,6 +212,7 @@ impl FeatureOpts {
             ResolveBehavior::V1 => {}
             ResolveBehavior::V2 | ResolveBehavior::V3 => {
                 enable(&vec!["all".to_string()]).unwrap();
+                opts.has_dev_units = has_dev_units;
             }
         }
         if let HasDevUnits::Yes = has_dev_units {
@@ -213,10 +228,17 @@ impl FeatureOpts {
     /// Creates a new `FeatureOpts` for the given behavior.
     pub fn new_behavior(behavior: ResolveBehavior, has_dev_units: HasDevUnits) -> FeatureOpts {
         match behavior {
-            ResolveBehavior::V1 => FeatureOpts::default(),
+            ResolveBehavior::V1 => FeatureOpts {
+                decouple_host_deps: false,
+                decouple_dev_deps: false,
+                has_dev_units: HasDevUnits::Yes,
+                ignore_inactive_targets: false,
+                compare: false,
+            },
             ResolveBehavior::V2 | ResolveBehavior::V3 => FeatureOpts {
                 decouple_host_deps: true,
                 decouple_dev_deps: has_dev_units == HasDevUnits::No,
+                has_dev_units,
                 ignore_inactive_targets: true,
                 compare: false,
             },
@@ -498,12 +520,17 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
                 // `--workspace`), this forces feature unification with normal
                 // dependencies. This is part of the bigger problem where
                 // features depend on which packages are built.
-                self.activate_pkg(member.package_id(), FeaturesFor::default(), &fvs)?;
+                self.activate_pkg(
+                    member.package_id(),
+                    FeaturesFor::default(),
+                    &fvs,
+                    self.opts.has_dev_units,
+                )?;
                 FeaturesFor::HostDep
             } else {
                 FeaturesFor::default()
             };
-            self.activate_pkg(member.package_id(), fk, &fvs)?;
+            self.activate_pkg(member.package_id(), fk, &fvs, self.opts.has_dev_units)?;
         }
         Ok(())
     }
@@ -517,6 +544,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
         pkg_id: PackageId,
         fk: FeaturesFor,
         fvs: &[FeatureValue],
+        has_dev_units: HasDevUnits,
     ) -> CargoResult<()> {
         tracing::trace!("activate_pkg {} {}", pkg_id.name(), fk);
         // Add an empty entry to ensure everything is covered. This is intended for
@@ -526,7 +554,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
             .entry((pkg_id, fk.apply_opts(&self.opts)))
             .or_insert_with(BTreeSet::new);
         for fv in fvs {
-            self.activate_fv(pkg_id, fk, fv)?;
+            self.activate_fv(pkg_id, fk, fv, has_dev_units)?;
         }
         if !self.processed_deps.insert((pkg_id, fk)) {
             // Already processed dependencies. There's no need to process them
@@ -544,7 +572,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
             // features that enable other features.
             return Ok(());
         }
-        for (dep_pkg_id, deps) in self.deps(pkg_id, fk)? {
+        for (dep_pkg_id, deps) in self.deps(pkg_id, fk, has_dev_units)? {
             for (dep, dep_fk) in deps {
                 if dep.is_optional() {
                     // Optional dependencies are enabled in `activate_fv` when
@@ -553,7 +581,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
                 }
                 // Recurse into the dependency.
                 let fvs = self.fvs_from_dependency(dep_pkg_id, dep);
-                self.activate_pkg(dep_pkg_id, dep_fk, &fvs)?;
+                self.activate_pkg(dep_pkg_id, dep_fk, &fvs, HasDevUnits::No)?;
             }
         }
         Ok(())
@@ -565,21 +593,29 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
         pkg_id: PackageId,
         fk: FeaturesFor,
         fv: &FeatureValue,
+        has_dev_units: HasDevUnits,
     ) -> CargoResult<()> {
         tracing::trace!("activate_fv {} {} {}", pkg_id.name(), fk, fv);
         match fv {
             FeatureValue::Feature(f) => {
-                self.activate_rec(pkg_id, fk, *f)?;
+                self.activate_rec(pkg_id, fk, *f, has_dev_units)?;
             }
             FeatureValue::Dep { dep_name } => {
-                self.activate_dependency(pkg_id, fk, *dep_name)?;
+                self.activate_dependency(pkg_id, fk, *dep_name, has_dev_units)?;
             }
             FeatureValue::DepFeature {
                 dep_name,
                 dep_feature,
                 weak,
             } => {
-                self.activate_dep_feature(pkg_id, fk, *dep_name, *dep_feature, *weak)?;
+                self.activate_dep_feature(
+                    pkg_id,
+                    fk,
+                    *dep_name,
+                    *dep_feature,
+                    *weak,
+                    has_dev_units,
+                )?;
             }
         }
         Ok(())
@@ -592,6 +628,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
         pkg_id: PackageId,
         fk: FeaturesFor,
         feature_to_enable: InternedString,
+        has_dev_units: HasDevUnits,
     ) -> CargoResult<()> {
         tracing::trace!(
             "activate_rec {} {} feat={}",
@@ -621,7 +658,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
             return Ok(());
         };
         for fv in fvs {
-            self.activate_fv(pkg_id, fk, fv)?;
+            self.activate_fv(pkg_id, fk, fv, has_dev_units)?;
         }
         Ok(())
     }
@@ -632,6 +669,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
         pkg_id: PackageId,
         fk: FeaturesFor,
         dep_name: InternedString,
+        has_dev_units: HasDevUnits,
     ) -> CargoResult<()> {
         // Mark this dependency as activated.
         let save_decoupled = fk.apply_opts(&self.opts);
@@ -644,7 +682,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
             .deferred_weak_dependencies
             .remove(&(pkg_id, fk, dep_name));
         // Activate the optional dep.
-        for (dep_pkg_id, deps) in self.deps(pkg_id, fk)? {
+        for (dep_pkg_id, deps) in self.deps(pkg_id, fk, has_dev_units)? {
             for (dep, dep_fk) in deps {
                 if dep.name_in_toml() != dep_name {
                     continue;
@@ -659,11 +697,11 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
                             dep_feature
                         );
                         let fv = FeatureValue::new(*dep_feature);
-                        self.activate_fv(dep_pkg_id, dep_fk, &fv)?;
+                        self.activate_fv(dep_pkg_id, dep_fk, &fv, HasDevUnits::No)?;
                     }
                 }
                 let fvs = self.fvs_from_dependency(dep_pkg_id, dep);
-                self.activate_pkg(dep_pkg_id, dep_fk, &fvs)?;
+                self.activate_pkg(dep_pkg_id, dep_fk, &fvs, HasDevUnits::No)?;
             }
         }
         Ok(())
@@ -677,8 +715,10 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
         dep_name: InternedString,
         dep_feature: InternedString,
         weak: bool,
+        has_dev_units: HasDevUnits,
     ) -> CargoResult<()> {
-        for (dep_pkg_id, deps) in self.deps(pkg_id, fk)? {
+        tracing::debug!("activate_dep_feature {pkg_id} {fk} {dep_name} {dep_feature} {weak:?}");
+        for (dep_pkg_id, deps) in self.deps(pkg_id, fk, has_dev_units)? {
             for (dep, dep_fk) in deps {
                 if dep.name_in_toml() != dep_name {
                     continue;
@@ -710,7 +750,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
 
                     // Activate the dependency on self.
                     let fv = FeatureValue::Dep { dep_name };
-                    self.activate_fv(pkg_id, fk, &fv)?;
+                    self.activate_fv(pkg_id, fk, &fv, has_dev_units)?;
                     if !weak {
                         // The old behavior before weak dependencies were
                         // added is to also enables a feature of the same
@@ -722,13 +762,13 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
                         let summary = self.resolve.summary(pkg_id);
                         let feature_map = summary.features();
                         if feature_map.contains_key(&dep_name) {
-                            self.activate_rec(pkg_id, fk, dep_name)?;
+                            self.activate_rec(pkg_id, fk, dep_name, has_dev_units)?;
                         }
                     }
                 }
                 // Activate the feature on the dependency.
                 let fv = FeatureValue::new(dep_feature);
-                self.activate_fv(dep_pkg_id, dep_fk, &fv)?;
+                self.activate_fv(dep_pkg_id, dep_fk, &fv, HasDevUnits::No)?;
             }
         }
         Ok(())
@@ -775,6 +815,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
         &mut self,
         pkg_id: PackageId,
         fk: FeaturesFor,
+        has_dev_units: HasDevUnits,
     ) -> CargoResult<Vec<(PackageId, Vec<(&'a Dependency, FeaturesFor)>)>> {
         // Helper for determining if a platform is activated.
         fn platform_activated(
@@ -819,7 +860,7 @@ impl<'a, 'gctx> FeatureResolver<'a, 'gctx> {
                         {
                             return false;
                         }
-                        if self.opts.decouple_dev_deps && dep.kind() == DepKind::Development {
+                        if dep.kind() == DepKind::Development && (has_dev_units == HasDevUnits::No || self.opts.decouple_dev_deps) {
                             return false;
                         }
                         true
