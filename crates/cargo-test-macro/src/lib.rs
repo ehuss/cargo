@@ -236,22 +236,13 @@ pub fn cargo_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             .map(|n| n.split("::").next().unwrap().to_string())
             .unwrap();
 
-        let mut new_body = if cfg!(windows) {
-            to_token_stream(
-                r#"let _test_guard = {
-                    let tmp_dir = option_env!("CARGO_TARGET_TMPDIR");
-                    cargo_test_support::paths::init_root(tmp_dir)
-                };"#,
-            )
-        } else {
-            to_token_stream(&format!(
-                r#"let _test_guard = {{
-                    let tmp_dir = option_env!("CARGO_TARGET_TMPDIR");
-                    let test_dir = cargo_test_support::paths::test_dir(std::file!(), "{name}");
+        let mut new_body = to_token_stream(&format!(
+            r#"let _test_guard = {{
+                let tmp_dir = option_env!("CARGO_TARGET_TMPDIR");
+                let test_dir = cargo_test_support::paths::test_dir(std::file!(), "{name}");
                 cargo_test_support::paths::init_root(tmp_dir, test_dir)
             }};"#
-            ))
-        };
+        ));
 
         new_body.extend(group.stream());
         ret.extend(Some(TokenTree::from(Group::new(

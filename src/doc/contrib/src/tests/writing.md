@@ -275,7 +275,7 @@ environment. The general process is:
 
    `cargo test --test testsuite -- features2::inactivate_targets`.
 2. In another terminal, head into the sandbox directory to inspect the files and run `cargo` directly.
-    1. The sandbox directories start with `t0` for the first test.
+    1. The first test's sandbox directory is called `t0`.
 
        `cd target/tmp/cit/t0`
     2. Set up the environment so that the sandbox configuration takes effect:

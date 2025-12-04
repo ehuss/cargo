@@ -67,10 +67,8 @@ pub fn global_root() -> PathBuf {
 // crate automatically insert an init function for each test that sets the
 // test name in a thread local variable.
 thread_local! {
-    #[cfg(windows)]
     static TEST_ID: RefCell<Option<usize>> = const { RefCell::new(None) };
-    #[cfg(not(windows))]
-    static TEST_NAME: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static TEST_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
 /// See [`init_root`]
@@ -79,78 +77,49 @@ pub struct TestIdGuard {
 }
 
 /// For test harnesses like [`crate::cargo_test`]
-#[cfg(windows)]
-pub fn init_root(tmp_dir: Option<&'static str>) -> TestIdGuard {
+pub fn init_root(tmp_dir: Option<&'static str>, test_dir: PathBuf) -> TestIdGuard {
     static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     TEST_ID.with(|n| *n.borrow_mut() = Some(id));
+    if cfg!(windows) {
+        // Due to path-length limits, Windows doesn't use the full test name.
+        TEST_DIR.with(|n| *n.borrow_mut() = Some(PathBuf::from(format!("t{id}"))));
+    } else {
+        TEST_DIR.with(|n| *n.borrow_mut() = Some(test_dir));
+    }
     let guard = TestIdGuard { _private: () };
 
     set_global_root(tmp_dir);
     let r = root();
     r.rm_rf();
     r.mkdir_p();
-
-    guard
-}
-
-/// For test harnesses like [`crate::cargo_test`]
-#[cfg(not(windows))]
-pub fn init_root(tmp_dir: Option<&'static str>, test_name: PathBuf) -> TestIdGuard {
-    static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-
-    TEST_NAME.with(|n| *n.borrow_mut() = Some(test_name));
-    let guard = TestIdGuard { _private: () };
-
-    set_global_root(tmp_dir);
-    let r = root();
-    r.rm_rf();
-    r.mkdir_p();
+    #[cfg(not(windows))]
     if id == 0 {
+        // Create a symlink from `t0` to the first test to make it easier to
+        // find and reuse when running a single test.
         use crate::SymlinkBuilder;
 
-        let mut root = global_root();
-        root.push(&format!("t{}", id));
-        root.rm_rf();
-        SymlinkBuilder::new_dir(r, root).mk();
+        let mut alias = global_root();
+        alias.push("t0");
+        alias.rm_rf();
+        SymlinkBuilder::new_dir(r, alias).mk();
     }
     guard
 }
 
 impl Drop for TestIdGuard {
     fn drop(&mut self) {
-        #[cfg(windows)]
         TEST_ID.with(|n| *n.borrow_mut() = None);
-        #[cfg(not(windows))]
-        TEST_NAME.with(|n| *n.borrow_mut() = None);
+        TEST_DIR.with(|n| *n.borrow_mut() = None);
     }
 }
 
 /// Path to the test's filesystem scratchpad
 ///
-/// ex: `$CARGO_TARGET_TMPDIR/cit/t0`
-#[cfg(windows)]
+/// ex: `$CARGO_TARGET_TMPDIR/cit/<integration test>/<module>/<fn name>/`
+/// or `$CARGO_TARGET_TMPDIR/cit/t0` on Windows
 pub fn root() -> PathBuf {
-    let id = TEST_ID.with(|n| {
-        n.borrow().expect(
-            "Tests must use the `#[cargo_test]` attribute in \
-             order to be able to use the crate root.",
-        )
-    });
-
-    let mut root = global_root();
-    root.push(&format!("t{}", id));
-    root
-}
-
-/// Path to the test's filesystem scratchpad
-///
-/// ex: `$CARGO_TARGET_TMPDIR/cit/t0`
-#[cfg(not(windows))]
-pub fn root() -> PathBuf {
-    let test_name = TEST_NAME.with(|n| {
+    let test_dir = TEST_DIR.with(|n| {
         n.borrow().clone().expect(
             "Tests must use the `#[cargo_test]` attribute in \
              order to be able to use the crate root.",
@@ -158,7 +127,7 @@ pub fn root() -> PathBuf {
     });
 
     let mut root = global_root();
-    root.push(&test_name);
+    root.push(&test_dir);
     root
 }
 
