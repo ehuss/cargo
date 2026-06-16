@@ -52,6 +52,15 @@ pub fn fix_edition(
             // if skip_if_not_edition(*initial)? {
             //     return Ok(());
             // }
+            for package in original_ws.members() {
+                let mut manifest_mut = LocalManifest::try_new(package.manifest_path())?;
+                let document = &mut manifest_mut.data;
+                let root = document.as_table_mut();
+                if let Some(package) = root.get_mut("package").and_then(|t| t.as_table_like_mut()) {
+                    package.remove("rust-version");
+                }
+                manifest_mut.write()?;
+            }
             let mut ws = original_ws.reload(gctx)?;
             while !all_at_latest(&opts.compile_opts.spec.get_packages(&ws)?)? {
                 eprintln!("crater-edition-check: migrating to next edition");
