@@ -40,6 +40,7 @@ pub fn fix_edition(
             // if skip_if_not_edition(*edition)? {
             //     return Ok(());
             // }
+            opts.compile_opts.filter = ops::CompileFilter::new_all_targets();
             ops::compile(&original_ws, &opts.compile_opts)?;
         }
         FixEdition::End {
